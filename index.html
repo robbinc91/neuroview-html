@@ -5,10 +5,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>NeuroView Web Pro</title>
+    <meta name="description" content="NeuroView Web - High-performance NIfTI/MRI viewer in the browser">
+    <meta name="theme-color" content="#000000">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='8' fill='%230ea5e9'/%3E%3C/svg%3E">
     <script src="tailwindscss.js"></script>
-    <script src="pako.min.js"></script>
+    <script src="pako.min.js" defer></script>
     <!-- Optional libraries loaded lazily on demand -->
-    <script src="https://unpkg.com/nifti-reader-js/dist/nifti-reader.min.js"></script>
+    <script src="https://unpkg.com/nifti-reader-js/dist/nifti-reader.min.js" defer ></script>
     <style>
         body {
             background-color: #000;
@@ -187,6 +190,8 @@
 </head>
 
 <body>
+
+    <noscript class="p-4 text-sm text-yellow-300 bg-neutral-900">JavaScript is required to run NeuroView Web. Please enable JavaScript in your browser.</noscript>
 
     <div class="flex h-screen w-screen">
         <!-- Sidebar -->
@@ -494,10 +499,10 @@
             <div id="view-axial" class="viewport active" data-axis="axial">
                 <div class="overlay-text flex items-center">
                     <span class="vp-label">AXIAL</span>
-                    <button class="view-control-btn btn-fullscreen" title="Toggle Fullscreen">⛶</button>
+                        <button class="view-control-btn btn-fullscreen" title="Toggle Fullscreen" aria-label="Toggle fullscreen axial view">⛶</button>
                 </div>
                 <div class="flex-1 relative flex items-center justify-center w-full h-full overflow-hidden">
-                    <canvas></canvas>
+                        <canvas role="img" aria-label="Axial view canvas" tabindex="0"></canvas>
                 </div>
             </div>
 
@@ -505,10 +510,10 @@
             <div id="view-coronal" class="viewport" data-axis="coronal">
                 <div class="overlay-text flex items-center">
                     <span class="vp-label">CORONAL</span>
-                    <button class="view-control-btn btn-fullscreen" title="Toggle Fullscreen">⛶</button>
+                        <button class="view-control-btn btn-fullscreen" title="Toggle Fullscreen" aria-label="Toggle fullscreen coronal view">⛶</button>
                 </div>
                 <div class="flex-1 relative flex items-center justify-center w-full h-full overflow-hidden">
-                    <canvas></canvas>
+                        <canvas role="img" aria-label="Coronal view canvas" tabindex="0"></canvas>
                 </div>
             </div>
 
@@ -516,21 +521,21 @@
             <div id="view-sagittal" class="viewport" data-axis="sagittal">
                 <div class="overlay-text flex items-center">
                     <span class="vp-label">SAGITTAL</span>
-                    <button class="view-control-btn btn-fullscreen" title="Toggle Fullscreen">⛶</button>
+                        <button class="view-control-btn btn-fullscreen" title="Toggle Fullscreen" aria-label="Toggle fullscreen sagittal view">⛶</button>
                 </div>
                 <div class="flex-1 relative flex items-center justify-center w-full h-full overflow-hidden">
-                    <canvas></canvas>
+                        <canvas role="img" aria-label="Sagittal view canvas" tabindex="0"></canvas>
                 </div>
             </div>
 
             <!-- 3D -->
             <div id="view-3d" class="viewport" data-axis="3d">
                 <div class="overlay-text flex items-center">
-                    <span class="text-yellow-500" class="vp-label">3D PROJECTION</span>
-                    <button class="view-control-btn btn-fullscreen" title="Toggle Fullscreen">⛶</button>
+                        <span class="vp-label text-yellow-500">3D PROJECTION</span>
+                        <button class="view-control-btn btn-fullscreen" title="Toggle Fullscreen" aria-label="Toggle fullscreen 3D view">⛶</button>
                 </div>
                 <div class="flex-1 relative flex items-center justify-center w-full h-full overflow-hidden bg-black">
-                    <canvas id="canvas-3d"></canvas>
+                        <canvas id="canvas-3d" role="img" aria-label="3D projection canvas" tabindex="0"></canvas>
                     <div id="3d-placeholder-text" class="absolute text-center pointer-events-none">
                         <div
                             class="w-16 h-16 rounded-full border-2 border-neutral-800 border-t-neutral-600 animate-spin mx-auto mb-2">
@@ -693,55 +698,125 @@
                 const progressEl = document.getElementById('vtk-progress');
                 if (loadingEl) loadingEl.classList.remove('hidden');
 
-                this.vtkPromise = new Promise(async (resolve, reject) => {
+                const loader = this;
+
+                // Helper: fetch & inject as before (streaming fallback)
+                const fetchAndInject = async () => {
+                    const response = await fetch('vtk.js', { mode: 'cors' });
+                    if (!response.ok) throw new Error('Failed to fetch VTK.js');
+
+                    const total = parseInt(response.headers.get('content-length') || '0', 10);
+                    const reader = response.body.getReader();
+                    const chunks = [];
+
+                    let received = 0;
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        chunks.push(value);
+                        received += value.length;
+
+                        if (total && progressEl) {
+                            const percent = Math.round((received / total) * 100);
+                            progressEl.style.width = percent + '%';
+                        }
+                    }
+
+                    const allChunks = new Uint8Array(received);
+                    let position = 0;
+                    for (const chunk of chunks) {
+                        allChunks.set(chunk, position);
+                        position += chunk.length;
+                    }
+
+                    const script = document.createElement('script');
+                    script.textContent = new TextDecoder('utf-8').decode(allChunks);
+                    document.head.appendChild(script);
+
+                    if (typeof vtk === 'undefined') {
+                        throw new Error('VTK.js failed to initialize after fetch');
+                    }
+                    return vtk;
+                };
+
+                this.vtkPromise = new Promise((resolve, reject) => {
+                    // First attempt: dynamic script tag (works for file:// in many browsers)
                     try {
-                        const response = await fetch('vtk.js', { mode: 'cors' });
-                        if (!response.ok) throw new Error('Failed to fetch VTK.js');
-
-                        const total = parseInt(response.headers.get('content-length') || '0', 10);
-                        const reader = response.body.getReader();
-                        const chunks = [];
-
-                        let received = 0;
-                        while (true) {
-                            const { done, value } = await reader.read();
-                            if (done) break;
-                            chunks.push(value);
-                            received += value.length;
-
-                            if (total && progressEl) {
-                                const percent = Math.round((received / total) * 100);
-                                progressEl.style.width = percent + '%';
+                        const s = document.createElement('script');
+                        s.src = 'vtk.js';
+                        s.async = true;
+                        s.onload = () => {
+                            if (typeof vtk !== 'undefined') {
+                                loader.vtk = vtk;
+                                if (loadingEl) loadingEl.classList.add('hidden');
+                                document.getElementById('3d-rendering')?.classList.add('hidden');
+                                loader.vtkLoading = false;
+                                resolve(vtk);
+                            } else {
+                                // Not initialized by script tag; try fetch fallback
+                                fetchAndInject().then((v) => {
+                                    loader.vtk = v;
+                                    if (loadingEl) loadingEl.classList.add('hidden');
+                                    document.getElementById('3d-rendering')?.classList.add('hidden');
+                                    loader.vtkLoading = false;
+                                    resolve(v);
+                                }).catch(err => {
+                                    console.error('Failed to load VTK.js via fetch fallback:', err);
+                                    if (loadingEl) loadingEl.innerHTML = '<div class="text-red-400">Failed to load VTK.js</div>';
+                                    loader.vtkLoading = false;
+                                    reject(err);
+                                });
                             }
-                        }
+                        };
+                        s.onerror = () => {
+                            // Script tag failed (often blocked under strict CSP); try fetch fallback
+                            fetchAndInject().then((v) => {
+                                loader.vtk = v;
+                                if (loadingEl) loadingEl.classList.add('hidden');
+                                document.getElementById('3d-rendering')?.classList.add('hidden');
+                                loader.vtkLoading = false;
+                                resolve(v);
+                            }).catch(err => {
+                                console.error('Failed to load VTK.js via fetch fallback:', err);
+                                if (loadingEl) loadingEl.innerHTML = '<div class="text-red-400">Failed to load VTK.js</div>';
+                                loader.vtkLoading = false;
+                                reject(err);
+                            });
+                        };
 
-                        const allChunks = new Uint8Array(received);
-                        let position = 0;
-                        for (const chunk of chunks) {
-                            allChunks.set(chunk, position);
-                            position += chunk.length;
-                        }
-
-                        const script = document.createElement('script');
-                        script.textContent = new TextDecoder('utf-8').decode(allChunks);
-                        document.head.appendChild(script);
-
-                        if (typeof vtk === 'undefined') {
-                            throw new Error('VTK.js failed to initialize');
-                        }
-
-                        this.vtk = vtk;
-                        if (loadingEl) loadingEl.classList.add('hidden');
-                        document.getElementById('3d-rendering')?.classList.add('hidden');
-                        resolve(vtk);
+                        document.head.appendChild(s);
+                        // If neither onload nor onerror fire within a timeout, attempt fetch fallback
+                        setTimeout(() => {
+                            if (!loader.vtk && loader.vtkLoading) {
+                                // try fetch fallback as last resort
+                                fetchAndInject().then((v) => {
+                                    loader.vtk = v;
+                                    if (loadingEl) loadingEl.classList.add('hidden');
+                                    document.getElementById('3d-rendering')?.classList.add('hidden');
+                                    loader.vtkLoading = false;
+                                    resolve(v);
+                                }).catch(err => {
+                                    console.error('Failed to load VTK.js after timeout fallback:', err);
+                                    if (loadingEl) loadingEl.innerHTML = '<div class="text-red-400">Failed to load VTK.js</div>';
+                                    loader.vtkLoading = false;
+                                    reject(err);
+                                });
+                            }
+                        }, 5000);
                     } catch (err) {
-                        console.error('Failed to load VTK.js:', err);
-                        if (loadingEl) {
-                            loadingEl.innerHTML = '<div class="text-red-400">Failed to load VTK.js</div>';
-                        }
-                        reject(err);
-                    } finally {
-                        this.vtkLoading = false;
+                        // If anything throws, fallback to fetch method
+                        fetchAndInject().then((v) => {
+                            loader.vtk = v;
+                            if (loadingEl) loadingEl.classList.add('hidden');
+                            document.getElementById('3d-rendering')?.classList.add('hidden');
+                            loader.vtkLoading = false;
+                            resolve(v);
+                        }).catch(e => {
+                            console.error('Failed to load VTK.js:', e);
+                            if (loadingEl) loadingEl.innerHTML = '<div class="text-red-400">Failed to load VTK.js</div>';
+                            loader.vtkLoading = false;
+                            reject(e);
+                        });
                     }
                 });
 
@@ -1270,8 +1345,29 @@
             const voxel = state.volume.voxelDims || { x: 1, y: 1, z: 1 };
             const voxel_mm3 = voxel.x * voxel.y * voxel.z;
 
-            const rows = [];
-            rows.push('<tr><th>Label</th><th>Name</th><th>Voxels</th><th>Volume (cm³)</th></tr>');
+            const w = window.open('', '_blank');
+            if (!w) {
+                alert('Unable to open report window (pop-up blocked).');
+                return;
+            }
+
+            const doc = w.document;
+            doc.open();
+            doc.write(`<!doctype html><html><head><meta charset="utf-8"><title>Volume Report</title><style>body{font-family:Arial;margin:10px}table{border-collapse:collapse}th,td{border:1px solid #ccc;padding:6px}</style></head><body><h2>Volumetric Analysis</h2></body></html>`);
+            doc.close();
+
+            const table = doc.createElement('table');
+            const thead = doc.createElement('thead');
+            const headerRow = doc.createElement('tr');
+            ['Label', 'Name', 'Voxels', 'Volume (cm³)'].forEach(h => {
+                const th = doc.createElement('th');
+                th.textContent = h;
+                headerRow.appendChild(th);
+            });
+            thead.appendChild(headerRow);
+            table.appendChild(thead);
+
+            const tbody = doc.createElement('tbody');
             for (const [label, cnt] of counts.entries()) {
                 const vol_cm3 = (cnt * voxel_mm3) / 1000.0;
                 let name = 'Label_' + label;
@@ -1280,20 +1376,17 @@
                     if (typeof entry === 'string') name = entry;
                     else if (typeof entry === 'object' && entry.name) name = entry.name;
                 }
-                rows.push(`<tr><td>${label}</td><td>${name}</td><td>${cnt}</td><td>${vol_cm3.toFixed(3)}</td></tr>`);
+
+                const tr = doc.createElement('tr');
+                const tdLabel = doc.createElement('td'); tdLabel.textContent = String(label); tr.appendChild(tdLabel);
+                const tdName = doc.createElement('td'); tdName.textContent = name; tr.appendChild(tdName);
+                const tdVox = doc.createElement('td'); tdVox.textContent = String(cnt); tr.appendChild(tdVox);
+                const tdVol = doc.createElement('td'); tdVol.textContent = vol_cm3.toFixed(3); tr.appendChild(tdVol);
+                tbody.appendChild(tr);
             }
 
-            const html = `
-        <html><head><title>Volume Report</title>
-        <style>body{font-family:Arial;margin:10px}table{border-collapse:collapse}th,td{border:1px solid #ccc;padding:6px}</style>
-        </head><body>
-        <h2>Volumetric Analysis</h2>
-        <table>${rows.join('')}</table>
-        </body></html>`;
-
-            const w = window.open('', '_blank');
-            w.document.write(html);
-            w.document.close();
+            table.appendChild(tbody);
+            doc.body.appendChild(table);
         }
 
         function resetViews() {
