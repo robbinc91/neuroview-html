@@ -7,11 +7,12 @@
     <title>NeuroView Web Pro</title>
     <meta name="description" content="NeuroView Web - High-performance NIfTI/MRI viewer in the browser">
     <meta name="theme-color" content="#000000">
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='8' fill='%230ea5e9'/%3E%3C/svg%3E">
+    <link rel="icon"
+        href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='8' fill='%230ea5e9'/%3E%3C/svg%3E">
     <script src="tailwindscss.js"></script>
     <script src="pako.min.js" defer></script>
     <!-- Optional libraries loaded lazily on demand -->
-    <script src="https://unpkg.com/nifti-reader-js/dist/nifti-reader.min.js" defer ></script>
+    <script src="https://unpkg.com/nifti-reader-js/dist/nifti-reader.min.js" defer></script>
     <style>
         body {
             background-color: #000;
@@ -136,62 +137,65 @@
         }
 
         /* Ensure the grid container is the reference for absolute positioning */
-    
-    .lazy-loading-overlay {
-        position: absolute;
-        inset: 0;
-        background: rgba(0, 0, 0, 0.85);
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        z-index: 50;
-        color: #94a3b8;
-        font-size: 13px;
-        gap: 12px;
-    }
 
-    .lazy-loading-overlay.hidden {
-        display: none;
-    }
+        .lazy-loading-overlay {
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.85);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 50;
+            color: #94a3b8;
+            font-size: 13px;
+            gap: 12px;
+        }
 
-    .lazy-spinner {
-        width: 32px;
-        height: 32px;
-        border: 2px solid #334155;
-        border-top-color: #0ea5e9;
-        border-radius: 50%;
-        animation: spin 0.8s linear infinite;
-    }
+        .lazy-loading-overlay.hidden {
+            display: none;
+        }
 
-    @keyframes spin {
-        to { transform: rotate(360deg); }
-    }
+        .lazy-spinner {
+            width: 32px;
+            height: 32px;
+            border: 2px solid #334155;
+            border-top-color: #0ea5e9;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
 
-    .progress-bar {
-        width: 120px;
-        height: 4px;
-        background: #334155;
-        border-radius: 2px;
-        overflow: hidden;
-    }
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
 
-    .progress-fill {
-        height: 100%;
-        background: #0ea5e9;
-        width: 0%;
-        transition: width 0.3s ease;
-    }
+        .progress-bar {
+            width: 120px;
+            height: 4px;
+            background: #334155;
+            border-radius: 2px;
+            overflow: hidden;
+        }
 
-    #main-grid-container {
-        position: relative;
-    }
-</style>
+        .progress-fill {
+            height: 100%;
+            background: #0ea5e9;
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        #main-grid-container {
+            position: relative;
+        }
+    </style>
 </head>
 
 <body>
 
-    <noscript class="p-4 text-sm text-yellow-300 bg-neutral-900">JavaScript is required to run NeuroView Web. Please enable JavaScript in your browser.</noscript>
+    <noscript class="p-4 text-sm text-yellow-300 bg-neutral-900">JavaScript is required to run NeuroView Web. Please
+        enable JavaScript in your browser.</noscript>
 
     <div class="flex h-screen w-screen">
         <!-- Sidebar -->
@@ -499,10 +503,11 @@
             <div id="view-axial" class="viewport active" data-axis="axial">
                 <div class="overlay-text flex items-center">
                     <span class="vp-label">AXIAL</span>
-                        <button class="view-control-btn btn-fullscreen" title="Toggle Fullscreen" aria-label="Toggle fullscreen axial view">⛶</button>
+                    <button class="view-control-btn btn-fullscreen" title="Toggle Fullscreen"
+                        aria-label="Toggle fullscreen axial view">⛶</button>
                 </div>
                 <div class="flex-1 relative flex items-center justify-center w-full h-full overflow-hidden">
-                        <canvas role="img" aria-label="Axial view canvas" tabindex="0"></canvas>
+                    <canvas role="img" aria-label="Axial view canvas" tabindex="0"></canvas>
                 </div>
             </div>
 
@@ -510,10 +515,11 @@
             <div id="view-coronal" class="viewport" data-axis="coronal">
                 <div class="overlay-text flex items-center">
                     <span class="vp-label">CORONAL</span>
-                        <button class="view-control-btn btn-fullscreen" title="Toggle Fullscreen" aria-label="Toggle fullscreen coronal view">⛶</button>
+                    <button class="view-control-btn btn-fullscreen" title="Toggle Fullscreen"
+                        aria-label="Toggle fullscreen coronal view">⛶</button>
                 </div>
                 <div class="flex-1 relative flex items-center justify-center w-full h-full overflow-hidden">
-                        <canvas role="img" aria-label="Coronal view canvas" tabindex="0"></canvas>
+                    <canvas role="img" aria-label="Coronal view canvas" tabindex="0"></canvas>
                 </div>
             </div>
 
@@ -521,21 +527,23 @@
             <div id="view-sagittal" class="viewport" data-axis="sagittal">
                 <div class="overlay-text flex items-center">
                     <span class="vp-label">SAGITTAL</span>
-                        <button class="view-control-btn btn-fullscreen" title="Toggle Fullscreen" aria-label="Toggle fullscreen sagittal view">⛶</button>
+                    <button class="view-control-btn btn-fullscreen" title="Toggle Fullscreen"
+                        aria-label="Toggle fullscreen sagittal view">⛶</button>
                 </div>
                 <div class="flex-1 relative flex items-center justify-center w-full h-full overflow-hidden">
-                        <canvas role="img" aria-label="Sagittal view canvas" tabindex="0"></canvas>
+                    <canvas role="img" aria-label="Sagittal view canvas" tabindex="0"></canvas>
                 </div>
             </div>
 
             <!-- 3D -->
             <div id="view-3d" class="viewport" data-axis="3d">
                 <div class="overlay-text flex items-center">
-                        <span class="vp-label text-yellow-500">3D PROJECTION</span>
-                        <button class="view-control-btn btn-fullscreen" title="Toggle Fullscreen" aria-label="Toggle fullscreen 3D view">⛶</button>
+                    <span class="vp-label text-yellow-500">3D PROJECTION</span>
+                    <button class="view-control-btn btn-fullscreen" title="Toggle Fullscreen"
+                        aria-label="Toggle fullscreen 3D view">⛶</button>
                 </div>
                 <div class="flex-1 relative flex items-center justify-center w-full h-full overflow-hidden bg-black">
-                        <canvas id="canvas-3d" role="img" aria-label="3D projection canvas" tabindex="0"></canvas>
+                    <canvas id="canvas-3d" role="img" aria-label="3D projection canvas" tabindex="0"></canvas>
                     <div id="3d-placeholder-text" class="absolute text-center pointer-events-none">
                         <div
                             class="w-16 h-16 rounded-full border-2 border-neutral-800 border-t-neutral-600 animate-spin mx-auto mb-2">
@@ -3360,6 +3368,48 @@
                 }, 50);
             });
         });
+
+        async function runRemoteSegmentation() {
+            // 1. Check if volume is loaded
+            if (!state.volume || !els.inputs.fileMri.files[0]) {
+                alert("Please load an MRI file from your disk first.");
+                return;
+            }
+
+            const file = els.inputs.fileMri.files[0];
+            const formData = new FormData();
+            formData.append("file", file);
+
+            // Update UI
+            els.labels.loading.textContent = "Uploading to Neural Network...";
+            els.labels.loading.classList.remove('hidden');
+
+            try {
+                // 2. Send to Backend
+                const response = await fetch("http://localhost:8080/process/segment", {
+                    method: "POST",
+                    body: formData
+                });
+
+                if (!response.ok) throw new Error("Backend Error: " + response.statusText);
+
+                // 3. Receive Blob (Mask)
+                els.labels.loading.textContent = "Downloading Mask...";
+                const blob = await response.blob();
+
+                // 4. Create File object and reuse your existing handleMaskLoad logic
+                const maskFile = new File([blob], "auto_mask.nii.gz", { type: "application/gzip" });
+                await handleMaskLoad(maskFile);
+
+                alert("Deep Learning Segmentation Complete!");
+
+            } catch (err) {
+                console.error(err);
+                alert("Segmentation Failed: " + err.message);
+            } finally {
+                els.labels.loading.classList.add('hidden');
+            }
+        }
     </script>
 </body>
 
