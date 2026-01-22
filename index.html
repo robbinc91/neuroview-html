@@ -375,6 +375,64 @@
         .screenshot-btn:hover {
             background: linear-gradient(135deg, #818cf8, #a78bfa);
         }
+
+        /* W/L Preset buttons */
+        .wl-preset-btn {
+            font-size: 10px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            background: #333;
+            color: #ccc;
+            border: 1px solid #444;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .wl-preset-btn:hover {
+            background: #0ea5e9;
+            color: white;
+            border-color: #0ea5e9;
+        }
+
+        .wl-preset-btn.active {
+            background: #0ea5e9;
+            color: white;
+            border-color: #0ea5e9;
+        }
+
+        /* Processing Log */
+        .processing-log {
+            max-height: 150px;
+            overflow-y: auto;
+            background: #0a0a0a;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 10px;
+        }
+
+        .log-entry {
+            padding: 4px 8px;
+            border-bottom: 1px solid #1f1f1f;
+            display: flex;
+            gap: 8px;
+        }
+
+        .log-entry:hover {
+            background: #1a1a1a;
+        }
+
+        .log-time {
+            color: #666;
+            flex-shrink: 0;
+        }
+
+        .log-op {
+            color: #0ea5e9;
+        }
+
+        .log-params {
+            color: #888;
+        }
     </style>
 </head>
 
@@ -653,6 +711,25 @@
                         </div>
                         <input type="range" id="input-wc" min="0" max="1000" value="200" class="w-full">
                     </div>
+
+                    <!-- Quick Presets -->
+                    <div class="space-y-2">
+                        <label class="text-xs text-neutral-500">Quick Presets:</label>
+                        <div id="wl-presets" class="flex flex-wrap gap-1">
+                            <button class="wl-preset-btn" data-ww="80" data-wc="40" title="WW:80 WC:40">🧠
+                                Brain</button>
+                            <button class="wl-preset-btn" data-ww="2000" data-wc="500" title="WW:2000 WC:500">🦴
+                                Bone</button>
+                            <button class="wl-preset-btn" data-ww="350" data-wc="50" title="WW:350 WC:50">🫁
+                                Lung</button>
+                            <button class="wl-preset-btn" data-ww="400" data-wc="50" title="WW:400 WC:50">🩺
+                                Soft</button>
+                            <button class="wl-preset-btn" data-ww="1500" data-wc="-600" title="WW:1500 WC:-600">🔬 CT
+                                Air</button>
+                            <button class="wl-preset-btn" data-ww="0" data-wc="0" data-auto="true" title="Auto-adjust">⚡
+                                Auto</button>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Appearance -->
@@ -762,6 +839,23 @@
                     </div>
                     <p class="text-xs text-neutral-500">Click to set window center, drag for width</p>
                 </div>
+
+                <!-- Processing Log -->
+                <div class="space-y-2">
+                    <div class="flex justify-between items-center">
+                        <h2 class="text-xs font-bold text-neutral-400 uppercase tracking-wider">Processing Log</h2>
+                        <div class="flex gap-1">
+                            <button id="btn-export-log" class="text-xs text-sky-500 hover:text-sky-400"
+                                title="Export log">📋</button>
+                            <button id="btn-clear-log" class="text-xs text-red-500 hover:text-red-400"
+                                title="Clear log">🗑️</button>
+                        </div>
+                    </div>
+                    <div id="processing-log" class="processing-log">
+                        <div class="log-entry text-neutral-500 italic">No operations yet</div>
+                    </div>
+                </div>
+
 
                 <button id="btn-reset"
                     class="w-full py-2 border border-neutral-600 text-neutral-400 rounded hover:bg-neutral-800 transition-colors">
@@ -4534,7 +4628,151 @@
         // Initial histogram draw
         setTimeout(drawHistogram, 500);
 
-        console.log('NeuroView Web Pro - Phase 2 loaded: Collapsible Sidebar, Histogram, Screenshot');
+        // ==========================================
+        // PHASE 3: W/L Presets & Processing Log
+        // ==========================================
+
+        // --- Processing Log ---
+        const processingLog = [];
+
+        function addLogEntry(operation, params = {}) {
+            const now = new Date();
+            const time = now.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+            const entry = {
+                time,
+                operation,
+                params: { ...params },
+                timestamp: now.getTime()
+            };
+
+            processingLog.push(entry);
+            renderProcessingLog();
+        }
+
+        function renderProcessingLog() {
+            const logEl = document.getElementById('processing-log');
+            if (!logEl) return;
+
+            if (processingLog.length === 0) {
+                logEl.innerHTML = '<div class="log-entry text-neutral-500 italic">No operations yet</div>';
+                return;
+            }
+
+            logEl.innerHTML = processingLog.slice(-20).reverse().map(entry => {
+                const paramsStr = Object.keys(entry.params).length > 0
+                    ? Object.entries(entry.params).map(([k, v]) => `${k}:${v}`).join(' ')
+                    : '';
+                return `<div class="log-entry">
+                    <span class="log-time">${entry.time}</span>
+                    <span class="log-op">${entry.operation}</span>
+                    <span class="log-params">${paramsStr}</span>
+                </div>`;
+            }).join('');
+        }
+
+        // Clear log
+        document.getElementById('btn-clear-log')?.addEventListener('click', () => {
+            processingLog.length = 0;
+            renderProcessingLog();
+        });
+
+        // Export log
+        document.getElementById('btn-export-log')?.addEventListener('click', () => {
+            if (processingLog.length === 0) {
+                alert('No log entries to export.');
+                return;
+            }
+
+            const text = processingLog.map(e => {
+                const params = Object.entries(e.params).map(([k, v]) => `${k}=${v}`).join(', ');
+                return `[${e.time}] ${e.operation}${params ? ' (' + params + ')' : ''}`;
+            }).join('\n');
+
+            const blob = new Blob([text], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `neuroview_log_${Date.now()}.txt`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        });
+
+        // --- W/L Presets ---
+        document.querySelectorAll('#wl-presets .wl-preset-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                // Remove active from all
+                document.querySelectorAll('#wl-presets .wl-preset-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+
+                if (btn.dataset.auto === 'true') {
+                    // Auto preset - use volume min/max
+                    if (state.volume) {
+                        const range = state.volume.max - state.volume.min;
+                        state.settings.windowWidth = range;
+                        state.settings.windowCenter = state.volume.min + range / 2;
+
+                        addLogEntry('W/L Preset', { preset: 'Auto', ww: Math.round(range), wc: Math.round(state.settings.windowCenter) });
+                    }
+                } else {
+                    const ww = Number(btn.dataset.ww);
+                    const wc = Number(btn.dataset.wc);
+                    state.settings.windowWidth = ww;
+                    state.settings.windowCenter = wc;
+
+                    addLogEntry('W/L Preset', { preset: btn.textContent.trim(), ww, wc });
+                }
+
+                // Update sliders
+                els.inputs.ww.value = state.settings.windowWidth;
+                els.inputs.wc.value = state.settings.windowCenter;
+                els.labels.ww.textContent = Math.round(state.settings.windowWidth);
+                els.labels.wc.textContent = Math.round(state.settings.windowCenter);
+
+                // Redraw
+                if (typeof drawHistogram === 'function') drawHistogram();
+                renderAll();
+            });
+        });
+
+        // Hook logging into existing operations
+        const origRunSegBtn = document.getElementById('btn-run-seg');
+        if (origRunSegBtn) {
+            origRunSegBtn.addEventListener('click', () => {
+                const op = document.getElementById('select-seg-op')?.value;
+                if (op) addLogEntry('Segmentation', { operation: op });
+            }, true);
+        }
+
+        const origRunOpBtn = document.getElementById('btn-run-op');
+        if (origRunOpBtn) {
+            origRunOpBtn.addEventListener('click', () => {
+                const op = document.getElementById('select-img-op')?.value;
+                if (op) addLogEntry('Image Processing', { operation: op });
+            }, true);
+        }
+
+        // Log brush strokes
+        const origBrushHandler = historyManager.push.bind(historyManager);
+        historyManager.push = function () {
+            origBrushHandler();
+            if (state.ui.tool === 'brush') {
+                addLogEntry('Brush Stroke', { size: state.ui.brushSize });
+            } else if (state.ui.tool === 'erase') {
+                addLogEntry('Eraser Stroke', { size: state.ui.brushSize });
+            }
+        };
+
+        // Log file loads  
+        const origHandleMriLoadPhase3 = handleMriLoad;
+        handleMriLoad = async function (file) {
+            await origHandleMriLoadPhase3(file);
+            addLogEntry('Load MRI', { filename: file.name || 'unknown' });
+        };
+
+        console.log('NeuroView Web Pro - Phase 3 loaded: W/L Presets, Processing Log');
     </script>
 </body>
 
