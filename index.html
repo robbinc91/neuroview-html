@@ -189,6 +189,106 @@
         #main-grid-container {
             position: relative;
         }
+
+        /* Drag & Drop Overlay */
+        .drag-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(14, 165, 233, 0.15);
+            border: 4px dashed #0ea5e9;
+            z-index: 200;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            pointer-events: none;
+        }
+
+        .drag-overlay.hidden {
+            display: none;
+        }
+
+        .drag-overlay-text {
+            background: rgba(0, 0, 0, 0.8);
+            padding: 20px 40px;
+            border-radius: 12px;
+            color: #0ea5e9;
+            font-size: 18px;
+            font-weight: bold;
+        }
+
+        /* Measurement line on canvas */
+        .measurement-label {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.85);
+            color: #22c55e;
+            font-family: monospace;
+            font-size: 11px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            pointer-events: none;
+            z-index: 15;
+            white-space: nowrap;
+        }
+
+        /* Keyboard Shortcuts Help Modal */
+        .shortcuts-modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.85);
+            z-index: 300;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .shortcuts-modal.hidden {
+            display: none;
+        }
+
+        .shortcuts-content {
+            background: #1f1f1f;
+            border: 1px solid #404040;
+            border-radius: 12px;
+            padding: 24px 32px;
+            max-width: 500px;
+            color: #e5e5e5;
+        }
+
+        .shortcuts-content h2 {
+            margin-bottom: 16px;
+            color: #0ea5e9;
+            font-size: 18px;
+        }
+
+        .shortcut-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 6px 0;
+            border-bottom: 1px solid #333;
+        }
+
+        .shortcut-key {
+            background: #333;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-family: monospace;
+            color: #0ea5e9;
+        }
+
+        /* Undo/Redo buttons */
+        .undo-redo-btn {
+            width: 40px;
+            height: 32px;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .undo-redo-btn:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
     </style>
 </head>
 
@@ -196,6 +296,34 @@
 
     <noscript class="p-4 text-sm text-yellow-300 bg-neutral-900">JavaScript is required to run NeuroView Web. Please
         enable JavaScript in your browser.</noscript>
+
+    <!-- Drag & Drop Overlay -->
+    <div id="drag-overlay" class="drag-overlay hidden">
+        <div class="drag-overlay-text">📂 Drop NIfTI file to load</div>
+    </div>
+
+    <!-- Keyboard Shortcuts Modal -->
+    <div id="shortcuts-modal" class="shortcuts-modal hidden">
+        <div class="shortcuts-content">
+            <h2>⌨️ Keyboard Shortcuts</h2>
+            <div class="shortcut-row"><span>Focus Axial View</span><span class="shortcut-key">1</span></div>
+            <div class="shortcut-row"><span>Focus Coronal View</span><span class="shortcut-key">2</span></div>
+            <div class="shortcut-row"><span>Focus Sagittal View</span><span class="shortcut-key">3</span></div>
+            <div class="shortcut-row"><span>Focus 3D View</span><span class="shortcut-key">4</span></div>
+            <div class="shortcut-row"><span>Navigate Slices</span><span class="shortcut-key">↑ ↓</span></div>
+            <div class="shortcut-row"><span>Navigate Tool</span><span class="shortcut-key">N</span></div>
+            <div class="shortcut-row"><span>Brush Tool</span><span class="shortcut-key">B</span></div>
+            <div class="shortcut-row"><span>Eraser Tool</span><span class="shortcut-key">E</span></div>
+            <div class="shortcut-row"><span>Measure Tool</span><span class="shortcut-key">M</span></div>
+            <div class="shortcut-row"><span>Undo</span><span class="shortcut-key">Ctrl+Z</span></div>
+            <div class="shortcut-row"><span>Redo</span><span class="shortcut-key">Ctrl+Y</span></div>
+            <div class="shortcut-row"><span>Reset View</span><span class="shortcut-key">R</span></div>
+            <div class="shortcut-row"><span>Close this help</span><span class="shortcut-key">? / Esc</span></div>
+            <button id="btn-close-shortcuts"
+                class="w-full mt-4 py-2 px-4 rounded bg-sky-600 hover:bg-sky-500 text-white font-medium">Close</button>
+        </div>
+    </div>
+
 
     <div class="flex h-screen w-screen">
         <!-- Sidebar -->
@@ -316,7 +444,7 @@
                 <!-- Manual Tools -->
                 <div class="space-y-3">
                     <h2 class="text-xs font-bold text-neutral-400 uppercase tracking-wider">Manual Tools</h2>
-                    <div class="flex items-center gap-2 bg-neutral-800 p-2 rounded">
+                    <div class="flex items-center gap-2 bg-neutral-800 p-2 rounded flex-wrap">
                         <label class="cursor-pointer text-xs text-neutral-300 flex items-center gap-1">
                             <input type="radio" name="tool" value="nav" checked class="accent-sky-500">
                             Nav
@@ -329,6 +457,10 @@
                             <input type="radio" name="tool" value="erase" class="accent-red-500">
                             Eraser
                         </label>
+                        <label class="cursor-pointer text-xs text-neutral-300 flex items-center gap-1">
+                            <input type="radio" name="tool" value="measure" class="accent-yellow-500">
+                            📏 Measure
+                        </label>
                     </div>
 
                     <div class="space-y-1">
@@ -338,7 +470,22 @@
                         </div>
                         <input type="range" id="input-brush-size" min="1" max="50" value="5" class="w-full">
                     </div>
+
+                    <!-- Undo/Redo -->
+                    <div class="flex gap-2 items-center">
+                        <button id="btn-undo"
+                            class="undo-redo-btn py-1 px-2 rounded text-white font-medium bg-neutral-700 hover:bg-neutral-600 transition-colors"
+                            disabled title="Undo (Ctrl+Z)">↶</button>
+                        <button id="btn-redo"
+                            class="undo-redo-btn py-1 px-2 rounded text-white font-medium bg-neutral-700 hover:bg-neutral-600 transition-colors"
+                            disabled title="Redo (Ctrl+Y)">↷</button>
+                        <span class="text-xs text-neutral-500 flex-1">Undo / Redo</span>
+                        <button id="btn-clear-measurements"
+                            class="py-1 px-2 rounded text-xs text-neutral-300 bg-neutral-800 hover:bg-neutral-700 transition-colors"
+                            title="Clear all measurements">Clear 📏</button>
+                    </div>
                 </div>
+
 
                 <!-- Thresholding & Segmentation -->
                 <div class="space-y-3">
@@ -471,6 +618,24 @@
                         </p>
                     </div>
                 </div>
+
+                <!-- Export -->
+                <div class="space-y-3">
+                    <h2 class="text-xs font-bold text-neutral-400 uppercase tracking-wider">Export</h2>
+                    <div class="grid grid-cols-2 gap-2">
+                        <button id="btn-export-mask"
+                            class="py-2 px-3 rounded text-white font-medium bg-emerald-700 hover:bg-emerald-600 transition-colors text-xs">
+                            Export Mask (NIfTI)
+                        </button>
+                        <button id="btn-export-slice"
+                            class="py-2 px-3 rounded text-white font-medium bg-cyan-700 hover:bg-cyan-600 transition-colors text-xs">
+                            Export Slice (PNG)
+                        </button>
+                    </div>
+                    <p class="text-xs text-neutral-500">Keyboard: <span class="text-sky-400">?</span> for shortcuts help
+                    </p>
+                </div>
+
 
                 <!-- Info -->
                 <div class="p-3 bg-neutral-800 rounded font-mono text-xs text-neutral-400 space-y-1">
@@ -680,13 +845,117 @@
                     sagittal: { zoom: 1, pan: { x: 0, y: 0 } },
                     coronal: { zoom: 1, pan: { x: 0, y: 0 } }
                 },
-                tool: 'nav', // 'nav', 'brush', 'erase'
+                tool: 'nav', // 'nav', 'brush', 'erase', 'measure'
                 brushSize: 5,
-                isPainting: false
+                isPainting: false,
+                // Measurement state
+                measureStart: null, // { axis, x, y, voxel: {x,y,z} }
+                measurements: []    // [{ axis, start, end, distance, label }]
             }
             ,
             labelMap: {} // mapping integer label -> name
         };
+
+        /**
+         * HISTORY MANAGER (Undo/Redo)
+         */
+        class HistoryManager {
+            constructor(maxSize = 15) {
+                this.stack = [];
+                this.index = -1;
+                this.maxSize = maxSize;
+            }
+
+            // Create a snapshot of current mask state
+            createSnapshot() {
+                if (!state.mask) return null;
+                return {
+                    maskData: new Float32Array(state.mask.data),
+                    dims: { ...state.mask.dims }
+                };
+            }
+
+            // Push current state before making changes
+            push() {
+                const snapshot = this.createSnapshot();
+                if (!snapshot) return;
+
+                // Remove any redo states after current index
+                if (this.index < this.stack.length - 1) {
+                    this.stack = this.stack.slice(0, this.index + 1);
+                }
+
+                this.stack.push(snapshot);
+
+                // Limit stack size
+                if (this.stack.length > this.maxSize) {
+                    this.stack.shift();
+                } else {
+                    this.index++;
+                }
+
+                this.updateButtons();
+            }
+
+            undo() {
+                if (!this.canUndo()) return false;
+
+                // Save current state for redo if we're at the end
+                if (this.index === this.stack.length - 1) {
+                    const currentSnapshot = this.createSnapshot();
+                    if (currentSnapshot) {
+                        this.stack.push(currentSnapshot);
+                    }
+                }
+
+                const snapshot = this.stack[this.index];
+                this.index--;
+                this.restoreSnapshot(snapshot);
+                this.updateButtons();
+                return true;
+            }
+
+            redo() {
+                if (!this.canRedo()) return false;
+
+                this.index++;
+                const snapshot = this.stack[this.index + 1];
+                if (snapshot) {
+                    this.restoreSnapshot(snapshot);
+                }
+                this.updateButtons();
+                return true;
+            }
+
+            restoreSnapshot(snapshot) {
+                if (!snapshot) return;
+                state.mask = {
+                    dims: snapshot.dims,
+                    data: new Float32Array(snapshot.maskData)
+                };
+                renderAll();
+                try { render3D(); } catch (e) { }
+            }
+
+            canUndo() { return this.index >= 0; }
+            canRedo() { return this.index < this.stack.length - 2; }
+
+            updateButtons() {
+                const undoBtn = document.getElementById('btn-undo');
+                const redoBtn = document.getElementById('btn-redo');
+                if (undoBtn) undoBtn.disabled = !this.canUndo();
+                if (redoBtn) redoBtn.disabled = !this.canRedo();
+            }
+
+            clear() {
+                this.stack = [];
+                this.index = -1;
+                this.updateButtons();
+            }
+        }
+
+        const historyManager = new HistoryManager();
+
 
         /**
          * LAZY LOADING FOR HEAVY LIBRARIES
@@ -3311,8 +3580,72 @@
             }
         });
 
-        // Keyboard
+        // Keyboard Shortcuts (Enhanced)
         window.addEventListener('keydown', (e) => {
+            // Check if user is typing in an input
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+
+            const shortcutsModal = document.getElementById('shortcuts-modal');
+
+            // Toggle shortcuts help
+            if (e.key === '?' || (e.key === '/' && e.shiftKey)) {
+                e.preventDefault();
+                shortcutsModal.classList.toggle('hidden');
+                return;
+            }
+
+            // Close shortcuts modal
+            if (e.key === 'Escape') {
+                shortcutsModal.classList.add('hidden');
+                return;
+            }
+
+            // Undo/Redo
+            if (e.ctrlKey || e.metaKey) {
+                if (e.key === 'z' || e.key === 'Z') {
+                    e.preventDefault();
+                    historyManager.undo();
+                    return;
+                }
+                if (e.key === 'y' || e.key === 'Y') {
+                    e.preventDefault();
+                    historyManager.redo();
+                    return;
+                }
+            }
+
+            // Viewport focus: 1-4
+            const setTool = (toolName) => {
+                const radio = document.querySelector(`input[name="tool"][value="${toolName}"]`);
+                if (radio) {
+                    radio.checked = true;
+                    state.ui.tool = toolName;
+                }
+            };
+
+            if (e.key === '1') { setActiveViewport('axial'); return; }
+            if (e.key === '2') { setActiveViewport('coronal'); return; }
+            if (e.key === '3') { setActiveViewport('sagittal'); return; }
+            if (e.key === '4') { setActiveViewport('3d'); return; }
+
+            // Tool shortcuts
+            if (e.key === 'n' || e.key === 'N') { setTool('nav'); return; }
+            if (e.key === 'b' || e.key === 'B') { setTool('brush'); return; }
+            if (e.key === 'e' || e.key === 'E') { setTool('erase'); return; }
+            if (e.key === 'm' || e.key === 'M') { setTool('measure'); return; }
+
+            // Reset view
+            if (e.key === 'r' || e.key === 'R') {
+                if (state.volume) {
+                    const d = state.volume.dims;
+                    state.crosshair = { x: Math.floor(d.x / 2), y: Math.floor(d.y / 2), z: Math.floor(d.z / 2) };
+                    resetViews();
+                    renderAll();
+                }
+                return;
+            }
+
+            // Arrow key navigation (existing behavior)
             if (!state.volume) return;
             const axis = state.activeAxis;
             const d = state.volume.dims;
@@ -3410,6 +3743,391 @@
                 els.labels.loading.classList.add('hidden');
             }
         }
+
+        // ==========================================
+        // QUICK WINS: New Feature Event Handlers
+        // ==========================================
+
+        // --- Drag & Drop ---
+        const dragOverlay = document.getElementById('drag-overlay');
+        let dragCounter = 0;
+
+        document.body.addEventListener('dragenter', (e) => {
+            e.preventDefault();
+            dragCounter++;
+            if (dragCounter === 1) {
+                dragOverlay.classList.remove('hidden');
+            }
+        });
+
+        document.body.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            dragCounter--;
+            if (dragCounter === 0) {
+                dragOverlay.classList.add('hidden');
+            }
+        });
+
+        document.body.addEventListener('dragover', (e) => {
+            e.preventDefault();
+        });
+
+        document.body.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            dragCounter = 0;
+            dragOverlay.classList.add('hidden');
+
+            const files = e.dataTransfer.files;
+            if (files.length === 0) return;
+
+            const file = files[0];
+            const name = file.name.toLowerCase();
+
+            if (name.endsWith('.nii') || name.endsWith('.nii.gz')) {
+                // Auto-detect: if filename contains 'mask' or 'seg', treat as mask
+                if (name.includes('mask') || name.includes('seg') || name.includes('label')) {
+                    if (state.volume) {
+                        await handleMaskLoad(file);
+                    } else {
+                        alert('Load an MRI volume first before loading a mask.');
+                    }
+                } else {
+                    await handleMriLoad(file);
+                }
+            } else {
+                alert('Please drop a NIfTI file (.nii or .nii.gz)');
+            }
+        });
+
+        // --- Shortcuts Modal Close ---
+        document.getElementById('btn-close-shortcuts')?.addEventListener('click', () => {
+            document.getElementById('shortcuts-modal').classList.add('hidden');
+        });
+
+        // --- Undo/Redo Buttons ---
+        document.getElementById('btn-undo')?.addEventListener('click', () => {
+            historyManager.undo();
+        });
+
+        document.getElementById('btn-redo')?.addEventListener('click', () => {
+            historyManager.redo();
+        });
+
+        // --- Clear Measurements ---
+        document.getElementById('btn-clear-measurements')?.addEventListener('click', () => {
+            state.ui.measurements = [];
+            state.ui.measureStart = null;
+            // Remove measurement labels from DOM
+            document.querySelectorAll('.measurement-label').forEach(el => el.remove());
+            renderAll();
+        });
+
+        // --- Export Mask as NIfTI ---
+        document.getElementById('btn-export-mask')?.addEventListener('click', () => {
+            if (!state.mask || !state.volume) {
+                alert('No mask to export. Create a segmentation first.');
+                return;
+            }
+
+            try {
+                // Build a minimal NIfTI-1 header
+                const dims = state.mask.dims;
+                const voxelDims = state.volume.voxelDims || { x: 1, y: 1, z: 1 };
+                const dataSize = dims.x * dims.y * dims.z;
+
+                // Header size: 348 bytes for NIfTI-1
+                const headerSize = 348;
+                const voxOffset = 352; // Data starts after header + 4 byte extension
+                const totalSize = voxOffset + dataSize; // Uint8 = 1 byte per voxel
+
+                const buffer = new ArrayBuffer(totalSize);
+                const view = new DataView(buffer);
+
+                // sizeof_hdr
+                view.setInt32(0, 348, true);
+
+                // dim[0..7] at byte 40
+                view.setInt16(40, 3, true);  // dim[0] = 3 dimensions
+                view.setInt16(42, dims.x, true);
+                view.setInt16(44, dims.y, true);
+                view.setInt16(46, dims.z, true);
+                view.setInt16(48, 1, true);
+                view.setInt16(50, 1, true);
+                view.setInt16(52, 1, true);
+                view.setInt16(54, 1, true);
+
+                // datatype = 2 (uint8)
+                view.setInt16(70, 2, true);
+                // bitpix = 8
+                view.setInt16(72, 8, true);
+
+                // pixdim at byte 76
+                view.setFloat32(76, 1.0, true);  // pixdim[0] (qfac)
+                view.setFloat32(80, voxelDims.x, true);
+                view.setFloat32(84, voxelDims.y, true);
+                view.setFloat32(88, voxelDims.z, true);
+
+                // vox_offset
+                view.setFloat32(108, voxOffset, true);
+
+                // scl_slope = 1, scl_inter = 0
+                view.setFloat32(112, 1.0, true);
+                view.setFloat32(116, 0.0, true);
+
+                // magic "n+1" at byte 344
+                view.setUint8(344, 0x6E); // 'n'
+                view.setUint8(345, 0x2B); // '+'
+                view.setUint8(346, 0x31); // '1'
+                view.setUint8(347, 0x00);
+
+                // Extension: 4 bytes of zeros
+                view.setInt32(348, 0, true);
+
+                // Write mask data as uint8
+                const maskData = new Uint8Array(buffer, voxOffset, dataSize);
+                for (let i = 0; i < dataSize; i++) {
+                    maskData[i] = Math.round(state.mask.data[i]) > 0 ? Math.min(255, Math.max(0, Math.round(state.mask.data[i]))) : 0;
+                }
+
+                // Download
+                const blob = new Blob([buffer], { type: 'application/octet-stream' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'mask_export.nii';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+
+                alert('Mask exported successfully!');
+            } catch (err) {
+                alert('Export failed: ' + err.message);
+            }
+        });
+
+        // --- Export Current Slice as PNG ---
+        document.getElementById('btn-export-slice')?.addEventListener('click', () => {
+            if (!state.volume) {
+                alert('No volume loaded.');
+                return;
+            }
+
+            const axis = state.activeAxis;
+            if (axis === '3d') {
+                alert('Please select a 2D viewport (Axial, Coronal, or Sagittal) to export.');
+                return;
+            }
+
+            const container = els.viewports[axis];
+            const canvas = container?.querySelector('canvas');
+            if (!canvas) {
+                alert('Canvas not found.');
+                return;
+            }
+
+            try {
+                const dataUrl = canvas.toDataURL('image/png');
+                const a = document.createElement('a');
+                a.href = dataUrl;
+                a.download = `slice_${axis}_${Date.now()}.png`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+            } catch (err) {
+                alert('Export failed: ' + err.message);
+            }
+        });
+
+        // --- Hook history push into brush painting ---
+        // Override mousedown listener to add history push before painting starts
+        (function () {
+            const originalCreatePaintHandler = () => {
+                // This will be hooked in the viewport mousedown handler
+            };
+
+            // Add history push trigger when painting starts
+            ['axial', 'sagittal', 'coronal'].forEach(axis => {
+                const container = els.viewports[axis];
+                if (!container) return;
+
+                container.addEventListener('mousedown', (e) => {
+                    const tool = state.ui.tool;
+                    if ((tool === 'brush' || tool === 'erase') && e.button === 0 && !e.shiftKey) {
+                        // Push history before starting to paint
+                        historyManager.push();
+                    }
+                }, true); // Capture phase to run before the existing handler
+            });
+        })();
+
+        // --- Measurement Tool Integration ---
+        // Note: The measurement handling is integrated into viewport mousedown
+        // We need to add measurement line drawing to renderAll
+        const originalRenderAll = typeof renderAll === 'function' ? renderAll : null;
+
+        // Extend renderAll to draw measurements
+        const renderMeasurements = () => {
+            // Remove old measurement labels
+            document.querySelectorAll('.measurement-label').forEach(el => el.remove());
+
+            state.ui.measurements.forEach((m, idx) => {
+                const container = els.viewports[m.axis];
+                if (!container) return;
+
+                const canvas = container.querySelector('canvas');
+                if (!canvas) return;
+
+                const ctx = canvas.getContext('2d');
+                const rect = canvas.getBoundingClientRect();
+                const d = state.volume?.dims;
+                if (!d) return;
+
+                // Convert voxel coords to canvas coords
+                let w, h;
+                if (m.axis === 'axial') { w = d.x; h = d.y; }
+                else if (m.axis === 'sagittal') { w = d.y; h = d.z; }
+                else { w = d.x; h = d.z; }
+
+                const vpState = state.ui.viewports[m.axis];
+                const scaleX = canvas.width / w;
+                const scaleY = canvas.height / h;
+                const baseScale = Math.min(scaleX, scaleY);
+
+                const offsetX = (canvas.width - w * baseScale) / 2;
+                const offsetY = (canvas.height - h * baseScale) / 2;
+
+                const x1 = offsetX + m.start.x * baseScale * vpState.zoom + vpState.pan.x;
+                const y1 = offsetY + m.start.y * baseScale * vpState.zoom + vpState.pan.y;
+                const x2 = offsetX + m.end.x * baseScale * vpState.zoom + vpState.pan.x;
+                const y2 = offsetY + m.end.y * baseScale * vpState.zoom + vpState.pan.y;
+
+                // Draw line
+                ctx.save();
+                ctx.strokeStyle = '#22c55e';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([4, 4]);
+                ctx.beginPath();
+                ctx.moveTo(x1, y1);
+                ctx.lineTo(x2, y2);
+                ctx.stroke();
+
+                // Draw endpoints
+                ctx.fillStyle = '#22c55e';
+                ctx.beginPath();
+                ctx.arc(x1, y1, 4, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(x2, y2, 4, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+
+                // Add label
+                const label = document.createElement('div');
+                label.className = 'measurement-label';
+                label.textContent = `${m.distance.toFixed(2)} mm`;
+                label.style.left = `${(x1 + x2) / 2 + container.offsetLeft}px`;
+                label.style.top = `${(y1 + y2) / 2 + container.offsetTop}px`;
+                container.appendChild(label);
+            });
+        };
+
+        // Hook into renderAll to also render measurements
+        const hookRenderAll = () => {
+            const origRenderAllFn = window.renderAll || (() => { });
+            if (origRenderAllFn._hooked) return;
+
+            window.renderAll = function (...args) {
+                origRenderAllFn.apply(this, args);
+                if (state.ui.measurements.length > 0) {
+                    setTimeout(renderMeasurements, 10);
+                }
+            };
+            window.renderAll._hooked = true;
+        };
+
+        // Delay hook to ensure renderAll is defined
+        setTimeout(hookRenderAll, 100);
+
+        // Add measurement click handler to viewports
+        ['axial', 'sagittal', 'coronal'].forEach(axis => {
+            const container = els.viewports[axis];
+            if (!container) return;
+
+            container.addEventListener('click', (e) => {
+                if (state.ui.tool !== 'measure' || !state.volume) return;
+
+                const canvas = container.querySelector('canvas');
+                if (!canvas) return;
+
+                const rect = canvas.getBoundingClientRect();
+                const d = state.volume.dims;
+                const voxelDims = state.volume.voxelDims || { x: 1, y: 1, z: 1 };
+
+                let w, h;
+                if (axis === 'axial') { w = d.x; h = d.y; }
+                else if (axis === 'sagittal') { w = d.y; h = d.z; }
+                else { w = d.x; h = d.z; }
+
+                const vpState = state.ui.viewports[axis];
+                const scaleX = rect.width / w;
+                const scaleY = rect.height / h;
+                const baseScale = Math.min(scaleX, scaleY);
+                const totalScale = baseScale * vpState.zoom;
+
+                const offsetX = (rect.width - w * baseScale) / 2;
+                const offsetY = (rect.height - h * baseScale) / 2;
+
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+
+                const imgX = (mouseX - offsetX - vpState.pan.x) / totalScale;
+                const imgY = (mouseY - offsetY - vpState.pan.y) / totalScale;
+
+                const clickPoint = { x: imgX, y: imgY };
+
+                if (!state.ui.measureStart) {
+                    // First click - start point
+                    state.ui.measureStart = { axis, ...clickPoint };
+                } else if (state.ui.measureStart.axis === axis) {
+                    // Second click - end point (same axis)
+                    const start = state.ui.measureStart;
+                    const end = clickPoint;
+
+                    // Calculate distance in mm
+                    let voxX, voxY;
+                    if (axis === 'axial') {
+                        voxX = voxelDims.x;
+                        voxY = voxelDims.y;
+                    } else if (axis === 'sagittal') {
+                        voxX = voxelDims.y;
+                        voxY = voxelDims.z;
+                    } else {
+                        voxX = voxelDims.x;
+                        voxY = voxelDims.z;
+                    }
+
+                    const dx = (end.x - start.x) * voxX;
+                    const dy = (end.y - start.y) * voxY;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+
+                    state.ui.measurements.push({
+                        axis,
+                        start: { x: start.x, y: start.y },
+                        end: { x: end.x, y: end.y },
+                        distance
+                    });
+
+                    state.ui.measureStart = null;
+                    renderAll();
+                } else {
+                    // Different axis - reset
+                    state.ui.measureStart = { axis, ...clickPoint };
+                }
+            });
+        });
+
+        console.log('NeuroView Web Pro - Quick Wins loaded: Undo/Redo, Keyboard Shortcuts, Drag & Drop, Measurements, Export');
     </script>
 </body>
 
