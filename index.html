@@ -289,6 +289,92 @@
             opacity: 0.3;
             cursor: not-allowed;
         }
+
+        /* Collapsible Sidebar */
+        .sidebar {
+            transition: width 0.3s ease, min-width 0.3s ease, opacity 0.3s ease;
+            overflow: hidden;
+        }
+
+        .sidebar.collapsed {
+            width: 48px !important;
+            min-width: 48px !important;
+        }
+
+        .sidebar.collapsed .sidebar-content {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .sidebar.collapsed .sidebar-header h1,
+        .sidebar.collapsed .sidebar-header p {
+            display: none;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            right: -14px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 28px;
+            height: 48px;
+            background: #262626;
+            border: 1px solid #404040;
+            border-left: none;
+            border-radius: 0 8px 8px 0;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #94a3b8;
+            z-index: 20;
+            transition: background 0.2s, color 0.2s;
+        }
+
+        .sidebar-toggle:hover {
+            background: #0ea5e9;
+            color: white;
+        }
+
+        /* Intensity Histogram */
+        .histogram-container {
+            background: #1a1a1a;
+            border-radius: 6px;
+            padding: 8px;
+            margin-top: 8px;
+        }
+
+        .histogram-canvas {
+            width: 100%;
+            height: 80px;
+            background: #0f0f0f;
+            border-radius: 4px;
+            cursor: crosshair;
+        }
+
+        .histogram-info {
+            display: flex;
+            justify-content: space-between;
+            font-size: 10px;
+            color: #666;
+            margin-top: 4px;
+        }
+
+        .histogram-cursor {
+            position: absolute;
+            width: 1px;
+            background: #0ea5e9;
+            pointer-events: none;
+        }
+
+        /* Screenshot button */
+        .screenshot-btn {
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+        }
+
+        .screenshot-btn:hover {
+            background: linear-gradient(135deg, #818cf8, #a78bfa);
+        }
     </style>
 </head>
 
@@ -318,6 +404,7 @@
             <div class="shortcut-row"><span>Undo</span><span class="shortcut-key">Ctrl+Z</span></div>
             <div class="shortcut-row"><span>Redo</span><span class="shortcut-key">Ctrl+Y</span></div>
             <div class="shortcut-row"><span>Reset View</span><span class="shortcut-key">R</span></div>
+            <div class="shortcut-row"><span>Toggle Sidebar</span><span class="shortcut-key">Tab</span></div>
             <div class="shortcut-row"><span>Close this help</span><span class="shortcut-key">? / Esc</span></div>
             <button id="btn-close-shortcuts"
                 class="w-full mt-4 py-2 px-4 rounded bg-sky-600 hover:bg-sky-500 text-white font-medium">Close</button>
@@ -327,14 +414,18 @@
 
     <div class="flex h-screen w-screen">
         <!-- Sidebar -->
-        <div class="w-80 bg-neutral-900 border-r border-neutral-800 flex flex-col text-sm h-full z-10 shadow-xl">
-            <div class="p-4 border-b border-neutral-800">
+        <div id="sidebar"
+            class="sidebar w-80 bg-neutral-900 border-r border-neutral-800 flex flex-col text-sm h-full z-10 shadow-xl relative">
+            <!-- Toggle Button -->
+            <button id="sidebar-toggle" class="sidebar-toggle" title="Toggle Sidebar (Tab)">◀</button>
+
+            <div class="sidebar-header p-4 border-b border-neutral-800">
                 <h1 class="text-xl font-bold text-sky-500 tracking-tight">NeuroView <span class="text-white">Web</span>
                 </h1>
                 <p class="text-neutral-500 text-xs mt-1">High-Performance NIfTI Viewer</p>
             </div>
 
-            <div class="p-4 space-y-6 overflow-y-auto flex-1">
+            <div class="sidebar-content p-4 space-y-6 overflow-y-auto flex-1">
 
                 <!-- File Operations -->
                 <div class="space-y-3">
@@ -632,7 +723,12 @@
                             Export Slice (PNG)
                         </button>
                     </div>
-                    <p class="text-xs text-neutral-500">Keyboard: <span class="text-sky-400">?</span> for shortcuts help
+                    <button id="btn-screenshot"
+                        class="w-full py-2 px-3 rounded text-white font-medium screenshot-btn transition-colors text-xs">
+                        📸 Screenshot All Viewports
+                    </button>
+                    <p class="text-xs text-neutral-500">Keyboard: <span class="text-sky-400">?</span> for shortcuts,
+                        <span class="text-sky-400">Tab</span> for sidebar
                     </p>
                 </div>
 
@@ -651,6 +747,20 @@
                         <span>Intensity:</span>
                         <span id="info-val" class="text-white">0</span>
                     </div>
+                </div>
+
+                <!-- Histogram -->
+                <div class="space-y-2">
+                    <h2 class="text-xs font-bold text-neutral-400 uppercase tracking-wider">Intensity Histogram</h2>
+                    <div class="histogram-container relative">
+                        <canvas id="histogram-canvas" class="histogram-canvas"></canvas>
+                        <div class="histogram-info">
+                            <span id="hist-min">Min: -</span>
+                            <span id="hist-cursor" class="text-sky-400">-</span>
+                            <span id="hist-max">Max: -</span>
+                        </div>
+                    </div>
+                    <p class="text-xs text-neutral-500">Click to set window center, drag for width</p>
                 </div>
 
                 <button id="btn-reset"
@@ -3645,6 +3755,14 @@
                 return;
             }
 
+            // Toggle sidebar
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                if (typeof toggleSidebar === 'function') toggleSidebar();
+                return;
+            }
+
+
             // Arrow key navigation (existing behavior)
             if (!state.volume) return;
             const axis = state.activeAxis;
@@ -4127,7 +4245,296 @@
             });
         });
 
-        console.log('NeuroView Web Pro - Quick Wins loaded: Undo/Redo, Keyboard Shortcuts, Drag & Drop, Measurements, Export');
+        // ==========================================
+        // PHASE 2: Sidebar, Histogram, Screenshot
+        // ==========================================
+
+        // --- Collapsible Sidebar ---
+        const sidebar = document.getElementById('sidebar');
+        const sidebarToggle = document.getElementById('sidebar-toggle');
+
+        function toggleSidebar() {
+            const isCollapsed = sidebar.classList.toggle('collapsed');
+            sidebarToggle.textContent = isCollapsed ? '▶' : '◀';
+            // Trigger resize for viewports
+            setTimeout(() => {
+                renderAll();
+                try { render3D(); } catch (e) { }
+            }, 350);
+        }
+
+        sidebarToggle?.addEventListener('click', toggleSidebar);
+
+        // --- Histogram ---
+        const histogramCanvas = document.getElementById('histogram-canvas');
+        const histogramCtx = histogramCanvas?.getContext('2d');
+        let histogramData = null;
+
+        function computeHistogram() {
+            if (!state.volume) return null;
+
+            const data = state.volume.data;
+            const bins = 256;
+            const min = state.volume.min;
+            const max = state.volume.max;
+            const range = max - min;
+
+            if (range <= 0) return null;
+
+            const hist = new Float32Array(bins);
+            const step = Math.max(1, Math.floor(data.length / 100000)); // Subsample large volumes
+
+            for (let i = 0; i < data.length; i += step) {
+                const idx = Math.floor(((data[i] - min) / range) * (bins - 1));
+                if (idx >= 0 && idx < bins) hist[idx]++;
+            }
+
+            // Normalize
+            let maxCount = 0;
+            for (let i = 0; i < bins; i++) {
+                if (hist[i] > maxCount) maxCount = hist[i];
+            }
+
+            return { hist, min, max, maxCount, bins };
+        }
+
+        function drawHistogram() {
+            if (!histogramCanvas || !histogramCtx) return;
+
+            const rect = histogramCanvas.getBoundingClientRect();
+            const dpr = window.devicePixelRatio || 1;
+            histogramCanvas.width = rect.width * dpr;
+            histogramCanvas.height = rect.height * dpr;
+            histogramCtx.scale(dpr, dpr);
+
+            const w = rect.width;
+            const h = rect.height;
+
+            // Clear
+            histogramCtx.fillStyle = '#0f0f0f';
+            histogramCtx.fillRect(0, 0, w, h);
+
+            if (!histogramData) {
+                histogramData = computeHistogram();
+            }
+
+            if (!histogramData) {
+                histogramCtx.fillStyle = '#333';
+                histogramCtx.font = '11px monospace';
+                histogramCtx.textAlign = 'center';
+                histogramCtx.fillText('No volume loaded', w / 2, h / 2);
+                return;
+            }
+
+            const { hist, min, max, maxCount, bins } = histogramData;
+            const barWidth = w / bins;
+
+            // Draw histogram bars
+            histogramCtx.fillStyle = '#0ea5e940';
+            for (let i = 0; i < bins; i++) {
+                const barHeight = (hist[i] / maxCount) * (h - 4);
+                histogramCtx.fillRect(i * barWidth, h - barHeight, barWidth, barHeight);
+            }
+
+            // Draw window/level overlay
+            const ww = state.settings.windowWidth;
+            const wc = state.settings.windowCenter;
+            const range = max - min;
+
+            const winStart = ((wc - ww / 2) - min) / range * w;
+            const winEnd = ((wc + ww / 2) - min) / range * w;
+
+            histogramCtx.fillStyle = 'rgba(14, 165, 233, 0.2)';
+            histogramCtx.fillRect(winStart, 0, winEnd - winStart, h);
+
+            // Draw window edges
+            histogramCtx.strokeStyle = '#0ea5e9';
+            histogramCtx.lineWidth = 1;
+            histogramCtx.beginPath();
+            histogramCtx.moveTo(winStart, 0);
+            histogramCtx.lineTo(winStart, h);
+            histogramCtx.moveTo(winEnd, 0);
+            histogramCtx.lineTo(winEnd, h);
+            histogramCtx.stroke();
+
+            // Update labels
+            document.getElementById('hist-min').textContent = `Min: ${min.toFixed(0)}`;
+            document.getElementById('hist-max').textContent = `Max: ${max.toFixed(0)}`;
+        }
+
+        // Histogram interaction
+        if (histogramCanvas) {
+            let histDragging = false;
+            let histDragStart = 0;
+            let histStartCenter = 0;
+
+            histogramCanvas.addEventListener('mousedown', (e) => {
+                if (!histogramData) return;
+                histDragging = true;
+                histDragStart = e.clientX;
+                histStartCenter = state.settings.windowCenter;
+            });
+
+            histogramCanvas.addEventListener('mousemove', (e) => {
+                if (!histogramData) return;
+
+                const rect = histogramCanvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const ratio = x / rect.width;
+                const value = histogramData.min + ratio * (histogramData.max - histogramData.min);
+
+                document.getElementById('hist-cursor').textContent = `Val: ${value.toFixed(1)}`;
+
+                if (histDragging) {
+                    const dx = e.clientX - histDragStart;
+                    const range = histogramData.max - histogramData.min;
+                    const delta = (dx / rect.width) * range;
+
+                    // Shift + drag adjusts width, regular drag adjusts center
+                    if (e.shiftKey) {
+                        state.settings.windowWidth = Math.max(10, state.settings.windowWidth + delta * 0.1);
+                    } else {
+                        state.settings.windowCenter = histStartCenter + delta;
+                    }
+
+                    // Update UI
+                    els.inputs.ww.value = state.settings.windowWidth;
+                    els.inputs.wc.value = state.settings.windowCenter;
+                    els.labels.ww.textContent = Math.round(state.settings.windowWidth);
+                    els.labels.wc.textContent = Math.round(state.settings.windowCenter);
+
+                    drawHistogram();
+                    renderAll();
+                }
+            });
+
+            histogramCanvas.addEventListener('mouseup', () => {
+                histDragging = false;
+            });
+
+            histogramCanvas.addEventListener('mouseleave', () => {
+                histDragging = false;
+                document.getElementById('hist-cursor').textContent = '-';
+            });
+
+            histogramCanvas.addEventListener('click', (e) => {
+                if (!histogramData) return;
+
+                const rect = histogramCanvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const ratio = x / rect.width;
+                const value = histogramData.min + ratio * (histogramData.max - histogramData.min);
+
+                state.settings.windowCenter = value;
+                els.inputs.wc.value = value;
+                els.labels.wc.textContent = Math.round(value);
+
+                drawHistogram();
+                renderAll();
+            });
+        }
+
+        // Hook histogram update into volume loading
+        const origHandleMriLoad = handleMriLoad;
+        handleMriLoad = async function (file) {
+            await origHandleMriLoad(file);
+            histogramData = null;
+            drawHistogram();
+        };
+
+        // --- Screenshot Tool ---
+        document.getElementById('btn-screenshot')?.addEventListener('click', async () => {
+            if (!state.volume) {
+                alert('Load a volume first to take a screenshot.');
+                return;
+            }
+
+            try {
+                // Get all viewport canvases
+                const viewports = ['axial', 'coronal', 'sagittal'];
+                const canvases = viewports.map(axis => {
+                    const container = els.viewports[axis];
+                    return container?.querySelector('canvas');
+                }).filter(c => c);
+
+                const v3dCanvas = document.getElementById('canvas-3d');
+
+                // Calculate composite dimensions
+                const padding = 10;
+                const headerHeight = 30;
+                const vpWidth = 400;
+                const vpHeight = 400;
+
+                // Create composite canvas (2x2 grid)
+                const compositeCanvas = document.createElement('canvas');
+                compositeCanvas.width = vpWidth * 2 + padding * 3;
+                compositeCanvas.height = vpHeight * 2 + padding * 3 + headerHeight;
+                const ctx = compositeCanvas.getContext('2d');
+
+                // Background
+                ctx.fillStyle = '#1a1a1a';
+                ctx.fillRect(0, 0, compositeCanvas.width, compositeCanvas.height);
+
+                // Header
+                ctx.fillStyle = '#0ea5e9';
+                ctx.font = 'bold 16px sans-serif';
+                ctx.fillText('NeuroView Web Pro', padding, 20);
+                ctx.fillStyle = '#666';
+                ctx.font = '12px sans-serif';
+                const timestamp = new Date().toLocaleString();
+                ctx.fillText(timestamp, compositeCanvas.width - padding - ctx.measureText(timestamp).width, 20);
+
+                // Draw viewports in 2x2 grid
+                const positions = [
+                    { x: padding, y: headerHeight + padding, label: 'AXIAL' },
+                    { x: vpWidth + padding * 2, y: headerHeight + padding, label: 'CORONAL' },
+                    { x: padding, y: vpHeight + headerHeight + padding * 2, label: 'SAGITTAL' },
+                    { x: vpWidth + padding * 2, y: vpHeight + headerHeight + padding * 2, label: '3D' }
+                ];
+
+                // Draw 2D viewports
+                for (let i = 0; i < 3 && i < canvases.length; i++) {
+                    ctx.drawImage(canvases[i], positions[i].x, positions[i].y, vpWidth, vpHeight);
+
+                    // Label
+                    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                    ctx.fillRect(positions[i].x, positions[i].y, 80, 20);
+                    ctx.fillStyle = '#0ea5e9';
+                    ctx.font = 'bold 11px monospace';
+                    ctx.fillText(positions[i].label, positions[i].x + 4, positions[i].y + 14);
+                }
+
+                // Draw 3D viewport
+                if (v3dCanvas) {
+                    ctx.drawImage(v3dCanvas, positions[3].x, positions[3].y, vpWidth, vpHeight);
+                    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                    ctx.fillRect(positions[3].x, positions[3].y, 80, 20);
+                    ctx.fillStyle = '#eab308';
+                    ctx.font = 'bold 11px monospace';
+                    ctx.fillText('3D VIEW', positions[3].x + 4, positions[3].y + 14);
+                }
+
+                // Download
+                const dataUrl = compositeCanvas.toDataURL('image/png');
+                const a = document.createElement('a');
+                a.href = dataUrl;
+                a.download = `neuroview_screenshot_${Date.now()}.png`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+
+            } catch (err) {
+                alert('Screenshot failed: ' + err.message);
+            }
+        });
+
+        // Add Tab key to toggle sidebar in keyboard handler
+        const origKeyHandler = window.addEventListener;
+
+        // Initial histogram draw
+        setTimeout(drawHistogram, 500);
+
+        console.log('NeuroView Web Pro - Phase 2 loaded: Collapsible Sidebar, Histogram, Screenshot');
     </script>
 </body>
 
