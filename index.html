@@ -433,6 +433,56 @@
         .log-params {
             color: #888;
         }
+
+        /* 3D Clip Box */
+        .clip-box-controls {
+            background: #1a1a1a;
+            border-radius: 6px;
+            padding: 10px;
+        }
+
+        .clip-slider-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 6px;
+        }
+
+        .clip-axis-label {
+            width: 16px;
+            font-weight: bold;
+            font-size: 11px;
+        }
+
+        .clip-axis-label.x {
+            color: #ef4444;
+        }
+
+        .clip-axis-label.y {
+            color: #22c55e;
+        }
+
+        .clip-axis-label.z {
+            color: #3b82f6;
+        }
+
+        .clip-range-input {
+            flex: 1;
+            height: 4px;
+        }
+
+        .clip-value {
+            font-size: 10px;
+            color: #666;
+            width: 40px;
+            text-align: right;
+        }
+
+        .clip-toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
     </style>
 </head>
 
@@ -785,6 +835,53 @@
                         <p class="text-xs text-neutral-500 mt-1">Higher = better visuals, lower = faster performance.
                         </p>
                     </div>
+
+                    <!-- 3D Clip Box -->
+                    <div class="space-y-2 pt-2 border-t border-neutral-700">
+                        <div class="flex justify-between items-center">
+                            <label class="text-neutral-300 text-sm">3D Clip Box</label>
+                            <div class="clip-toggle">
+                                <input type="checkbox" id="check-clip-enabled" class="w-4 h-4 accent-sky-500">
+                                <span class="text-xs text-neutral-500">Enable</span>
+                            </div>
+                        </div>
+                        <div id="clip-box-controls" class="clip-box-controls hidden">
+                            <!-- X Axis -->
+                            <div class="clip-slider-row">
+                                <span class="clip-axis-label x">X</span>
+                                <input type="range" id="clip-x-min" class="clip-range-input" min="0" max="100"
+                                    value="0">
+                                <input type="range" id="clip-x-max" class="clip-range-input" min="0" max="100"
+                                    value="100">
+                                <span id="clip-x-val" class="clip-value">0-100%</span>
+                            </div>
+                            <!-- Y Axis -->
+                            <div class="clip-slider-row">
+                                <span class="clip-axis-label y">Y</span>
+                                <input type="range" id="clip-y-min" class="clip-range-input" min="0" max="100"
+                                    value="0">
+                                <input type="range" id="clip-y-max" class="clip-range-input" min="0" max="100"
+                                    value="100">
+                                <span id="clip-y-val" class="clip-value">0-100%</span>
+                            </div>
+                            <!-- Z Axis -->
+                            <div class="clip-slider-row">
+                                <span class="clip-axis-label z">Z</span>
+                                <input type="range" id="clip-z-min" class="clip-range-input" min="0" max="100"
+                                    value="0">
+                                <input type="range" id="clip-z-max" class="clip-range-input" min="0" max="100"
+                                    value="100">
+                                <span id="clip-z-val" class="clip-value">0-100%</span>
+                            </div>
+                            <div class="flex gap-2 mt-2">
+                                <button id="btn-clip-reset"
+                                    class="flex-1 py-1 px-2 rounded text-xs bg-neutral-700 hover:bg-neutral-600 text-white">Reset</button>
+                                <button id="btn-clip-sync"
+                                    class="flex-1 py-1 px-2 rounded text-xs bg-sky-700 hover:bg-sky-600 text-white"
+                                    title="Center on crosshair">📍 Crosshair</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Export -->
@@ -1054,107 +1151,166 @@
                 isPainting: false,
                 // Measurement state
                 measureStart: null, // { axis, x, y, voxel: {x,y,z} }
-                measurements: []    // [{ axis, start, end, distance, label }]
+                measurements: [],    // [{ axis, start, end, distance, label }]
+                drawSeq: { axial: 0, sagittal: 0, coronal: 0 },
+                /** Cached CSS size + dpr per 2D wrapper (ResizeObserver); avoids layout reads every draw. */
+                viewportLayout: {
+                    axial: { w: 0, h: 0, dpr: 0 },
+                    sagittal: { w: 0, h: 0, dpr: 0 },
+                    coronal: { w: 0, h: 0, dpr: 0 }
+                }
             }
             ,
             labelMap: {} // mapping integer label -> name
         };
 
+        /** Throttle mask / VTK 3D refreshes during brush drag & clip sliders. */
+        let mask3DThrottleTimer = null;
+        const MASK_3D_THROTTLE_MS = 220;
+        function cancelMask3DThrottle() {
+            if (mask3DThrottleTimer) {
+                clearTimeout(mask3DThrottleTimer);
+                mask3DThrottleTimer = null;
+            }
+        }
+
         /**
          * HISTORY MANAGER (Undo/Redo)
+         * Brush/eraser: compact per-stroke voxel deltas.
+         * Full mask replace (e.g. segmentation): infrequent full-mask entries.
          */
         class HistoryManager {
-            constructor(maxSize = 15) {
-                this.stack = [];
-                this.index = -1;
-                this.maxSize = maxSize;
+            constructor(maxDeltaOps = 50) {
+                this.undoStack = [];
+                this.redoStack = [];
+                this.maxDeltaOps = maxDeltaOps;
+                this._strokeBefore = null;
             }
 
-            // Create a snapshot of current mask state
-            createSnapshot() {
-                if (!state.mask) return null;
-                return {
-                    maskData: new Float32Array(state.mask.data),
-                    dims: { ...state.mask.dims }
-                };
-            }
-
-            // Push current state before making changes
-            push() {
-                const snapshot = this.createSnapshot();
-                if (!snapshot) return;
-
-                // Remove any redo states after current index
-                if (this.index < this.stack.length - 1) {
-                    this.stack = this.stack.slice(0, this.index + 1);
-                }
-
-                this.stack.push(snapshot);
-
-                // Limit stack size
-                if (this.stack.length > this.maxSize) {
-                    this.stack.shift();
-                } else {
-                    this.index++;
-                }
-
+            clear() {
+                this.undoStack.length = 0;
+                this.redoStack.length = 0;
+                this._strokeBefore = null;
                 this.updateButtons();
             }
 
-            undo() {
-                if (!this.canUndo()) return false;
+            beginBrushStroke() {
+                this._strokeBefore = new Map();
+            }
 
-                // Save current state for redo if we're at the end
-                if (this.index === this.stack.length - 1) {
-                    const currentSnapshot = this.createSnapshot();
-                    if (currentSnapshot) {
-                        this.stack.push(currentSnapshot);
-                    }
+            noteMaskWrite(idx, oldVal) {
+                if (!this._strokeBefore || !state.mask) return;
+                if (!this._strokeBefore.has(idx)) this._strokeBefore.set(idx, oldVal);
+            }
+
+            cancelBrushStroke() {
+                this._strokeBefore = null;
+            }
+
+            commitBrushStroke() {
+                if (!this._strokeBefore || !state.mask || this._strokeBefore.size === 0) {
+                    this._strokeBefore = null;
+                    return false;
                 }
 
-                const snapshot = this.stack[this.index];
-                this.index--;
-                this.restoreSnapshot(snapshot);
+                const n = this._strokeBefore.size;
+                const indices = new Uint32Array(n);
+                const before = new Float32Array(n);
+                let j = 0;
+                for (const [idx, val] of this._strokeBefore) {
+                    indices[j] = idx;
+                    before[j] = val;
+                    j++;
+                }
+                const after = new Float32Array(n);
+                for (let i = 0; i < n; i++) {
+                    after[i] = state.mask.data[indices[i]];
+                }
+                this._strokeBefore = null;
+
+                this.redoStack.length = 0;
+                this.undoStack.push({ kind: 'delta', indices, before, after });
+                while (this.undoStack.length > this.maxDeltaOps) this.undoStack.shift();
+                this.updateButtons();
+                return true;
+            }
+
+            pushMaskReplace(newMask) {
+                if (!newMask || !newMask.data) return;
+                const oldMask = state.mask
+                    ? { dims: { ...state.mask.dims }, data: new Float32Array(state.mask.data) }
+                    : null;
+                const newCopy = { dims: { ...newMask.dims }, data: new Float32Array(newMask.data) };
+                this.redoStack.length = 0;
+                this.undoStack.push({ kind: 'replace', oldMask, newMask: newCopy });
+                while (this.undoStack.length > this.maxDeltaOps) this.undoStack.shift();
+                this.updateButtons();
+            }
+
+            _afterMutation() {
+                if (typeof cancelMask3DThrottle === 'function') cancelMask3DThrottle();
+                renderAll(true);
+                populateLabelColorUI();
+            }
+
+            undo() {
+                const op = this.undoStack.pop();
+                if (!op) return false;
+
+                if (op.kind === 'delta') {
+                    if (!state.mask) {
+                        this.undoStack.push(op);
+                        return false;
+                    }
+                    for (let i = 0; i < op.indices.length; i++) {
+                        state.mask.data[op.indices[i]] = op.before[i];
+                    }
+                    this.redoStack.push(op);
+                } else if (op.kind === 'replace') {
+                    state.mask = op.oldMask
+                        ? { dims: { ...op.oldMask.dims }, data: new Float32Array(op.oldMask.data) }
+                        : null;
+                    this.redoStack.push(op);
+                }
+
+                this._afterMutation();
                 this.updateButtons();
                 return true;
             }
 
             redo() {
-                if (!this.canRedo()) return false;
+                const op = this.redoStack.pop();
+                if (!op) return false;
 
-                this.index++;
-                const snapshot = this.stack[this.index + 1];
-                if (snapshot) {
-                    this.restoreSnapshot(snapshot);
+                if (op.kind === 'delta') {
+                    if (!state.mask) {
+                        this.redoStack.push(op);
+                        return false;
+                    }
+                    for (let i = 0; i < op.indices.length; i++) {
+                        state.mask.data[op.indices[i]] = op.after[i];
+                    }
+                    this.undoStack.push(op);
+                } else if (op.kind === 'replace') {
+                    state.mask = op.newMask
+                        ? { dims: { ...op.newMask.dims }, data: new Float32Array(op.newMask.data) }
+                        : null;
+                    this.undoStack.push(op);
                 }
+
+                this._afterMutation();
                 this.updateButtons();
                 return true;
             }
 
-            restoreSnapshot(snapshot) {
-                if (!snapshot) return;
-                state.mask = {
-                    dims: snapshot.dims,
-                    data: new Float32Array(snapshot.maskData)
-                };
-                renderAll();
-                try { render3D(); } catch (e) { }
-            }
-
-            canUndo() { return this.index >= 0; }
-            canRedo() { return this.index < this.stack.length - 2; }
+            canUndo() { return this.undoStack.length > 0; }
+            canRedo() { return this.redoStack.length > 0; }
 
             updateButtons() {
                 const undoBtn = document.getElementById('btn-undo');
                 const redoBtn = document.getElementById('btn-redo');
                 if (undoBtn) undoBtn.disabled = !this.canUndo();
                 if (redoBtn) redoBtn.disabled = !this.canRedo();
-            }
-
-            clear() {
-                this.stack = [];
-                this.index = -1;
-                this.updateButtons();
             }
         }
 
@@ -1644,23 +1800,116 @@
         els.inputs.btnRunSeg = document.getElementById('btn-run-seg');
         els.inputs.segParams = document.getElementById('seg-params');
 
+        function syncViewportLayout(axis) {
+            const container = els.viewports[axis];
+            if (!container) return;
+            const canvas = container.querySelector('canvas');
+            if (!canvas) return;
+            const wrapper = canvas.parentElement;
+            const r = wrapper.getBoundingClientRect();
+            state.ui.viewportLayout[axis] = {
+                w: r.width,
+                h: r.height,
+                dpr: window.devicePixelRatio || 1
+            };
+        }
+
+        let viewportResizeRaf = null;
+        function scheduleGrid2DRedraw() {
+            if (viewportResizeRaf != null) return;
+            viewportResizeRaf = requestAnimationFrame(() => {
+                viewportResizeRaf = null;
+                if (state.volume && typeof renderAll === 'function') renderAll(false);
+            });
+        }
+
+        ['axial', 'sagittal', 'coronal'].forEach(axis => {
+            const container = els.viewports[axis];
+            const canvas = container?.querySelector('canvas');
+            const wrapper = canvas?.parentElement;
+            if (!wrapper) return;
+            syncViewportLayout(axis);
+            new ResizeObserver(() => {
+                syncViewportLayout(axis);
+                scheduleGrid2DRedraw();
+            }).observe(wrapper);
+        });
+        window.addEventListener('resize', () => {
+            ['axial', 'sagittal', 'coronal'].forEach(syncViewportLayout);
+            scheduleGrid2DRedraw();
+        });
+
+        let niftiWorker = null;
+        let niftiWorkerTried = false;
+        let niftiJobId = 0;
+        const niftiPending = new Map();
+
+        function getNiftiWorker() {
+            if (niftiWorkerTried) return niftiWorker;
+            niftiWorkerTried = true;
+            try {
+                const w = new Worker('nifti-load-worker.js');
+                w.onmessage = (ev) => {
+                    const d = ev.data;
+                    const pending = niftiPending.get(d.id);
+                    if (!pending) return;
+                    niftiPending.delete(d.id);
+                    if (d.ok) {
+                        const vol = {
+                            data: new Float32Array(d.data),
+                            min: d.min,
+                            max: d.max,
+                            dims: d.dims,
+                            voxelDims: d.voxelDims,
+                            header: d.header
+                        };
+                        pending.resolve(vol);
+                    } else pending.reject(new Error(d.error || 'NIfTI worker error'));
+                };
+                w.addEventListener('error', () => { niftiWorker = null; });
+                niftiWorker = w;
+            } catch (err) {
+                console.warn('NIfTI load worker unavailable:', err);
+                niftiWorker = null;
+            }
+            return niftiWorker;
+        }
+
         /**
          * FILE I/O
          */
         async function loadFile(file) {
+            const wk = getNiftiWorker();
+            if (wk) {
+                let buffer;
+                try {
+                    buffer = await file.arrayBuffer();
+                } catch (e) {
+                    return Promise.reject(e);
+                }
+                const id = ++niftiJobId;
+                return new Promise((resolve, reject) => {
+                    niftiPending.set(id, { resolve, reject });
+                    try {
+                        wk.postMessage({ id, buffer, fileName: file.name || '' }, [buffer]);
+                    } catch (err) {
+                        niftiPending.delete(id);
+                        reject(err);
+                    }
+                });
+            }
+
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
                 reader.onload = (e) => {
                     try {
                         let buffer = e.target.result;
-                        // Handle gzip
-                        if (file.name.endsWith('.gz')) {
+                        if ((file.name || '').toLowerCase().endsWith('.gz')) {
                             buffer = pako.inflate(new Uint8Array(buffer)).buffer;
                         }
 
                         const header = NiftiParser.parseHeader(buffer);
                         const result = NiftiParser.readData(header, buffer);
-                        // Return data + dims + voxel dimensions + raw header for later use
                         resolve({ ...result, dims: header.dims, voxelDims: header.voxelDims, header });
                     } catch (err) {
                         reject(err);
@@ -1678,6 +1927,7 @@
             try {
                 const vol = await loadFile(file);
                 state.volume = vol;
+                historyManager.clear();
 
                 // Reset View
                 const d = vol.dims;
@@ -1757,6 +2007,7 @@
                     throw new Error(`Dimension mismatch: MRI ${vd.x}x${vd.y}x${vd.z} vs Mask ${md.x}x${md.y}x${md.z}`);
                 }
 
+                historyManager.clear();
                 state.mask = mask;
                 els.labels.maskGroup.classList.remove('opacity-50', 'pointer-events-none');
                 populateLabelColorUI();
@@ -2236,6 +2487,20 @@
             }).join('');
         }
 
+        /** Flatten custom label colors for the slice worker (string key -> [r,g,b]). */
+        function serializeLabelMapForWorker() {
+            const o = {};
+            if (!state.labelMap) return o;
+            for (const k of Object.keys(state.labelMap)) {
+                const entry = state.labelMap[k];
+                if (entry && typeof entry === 'object' && entry.color) {
+                    const rgb = parseHexColor(entry.color);
+                    if (rgb) o[k] = rgb;
+                }
+            }
+            return o;
+        }
+
         function populateLabelColorUI() {
             const container = document.getElementById('label-colors');
             if (!container) return;
@@ -2301,8 +2566,7 @@
                     if (existing && typeof existing === 'object') existing.color = c, existing.name = existing.name || nameInput.value;
                     else state.labelMap[lab] = { name: nameInput.value, color: c };
                     renderAll();
-                    updateVTKVolume();
-                    try { render3D(); } catch (e) { }
+                    requestMask3DRefresh(false);
                 });
 
                 nameInput.addEventListener('change', (e) => {
@@ -2312,7 +2576,7 @@
                     if (existing && typeof existing === 'object') existing.name = nm;
                     else state.labelMap[lab] = { name: nm, color: colorInput.value };
                     renderAll();
-                    updateVTKVolume();
+                    requestMask3DRefresh(true);
                 });
 
                 row.appendChild(lbl);
@@ -2328,7 +2592,8 @@
                     state.labelMap[lab] = { name: state.labelMap && state.labelMap[lab] && state.labelMap[lab].name ? state.labelMap[lab].name : ('Label_' + lab), color: rgbToHex(getMaskColor(lab) || [255, 0, 0]) };
                 }
                 populateLabelColorUI();
-                renderAll(); updateVTKVolume(); try { render3D(); } catch (e) { }
+                renderAll();
+                requestMask3DRefresh(true);
             };
             const btnRefresh = document.getElementById('btn-refresh-label-colors');
             if (btnRefresh) btnRefresh.onclick = () => { populateLabelColorUI(); };
@@ -2337,95 +2602,140 @@
         // Reusable Temp Canvas for Offscreen Rendering
         const tempCanvas = document.createElement('canvas');
         const tempCtx = tempCanvas.getContext('2d');
+        const pendingSliceLayout = {};
 
-        function drawViewport(axis) {
-            if (!state.volume) return;
+        function finalize2DSliceDisplay(lay, rgbaBuffer) {
+            const u8 = new Uint8ClampedArray(rgbaBuffer);
+            const imgData = new ImageData(u8, lay.srcW, lay.srcH);
+            tempCtx.putImageData(imgData, 0, 0);
 
-            const container = els.viewports[axis];
-            const canvas = container.querySelector('canvas');
-            const wrapper = canvas.parentElement;
-            const vpState = state.ui.viewports[axis];
-
-            let w, h;
-            const d = state.volume.dims;
-            if (axis === 'axial') { w = d.x; h = d.y; }
-            else if (axis === 'sagittal') { w = d.y; h = d.z; }
-            else if (axis === 'coronal') { w = d.x; h = d.z; }
-
-            // Resize main canvas to container (Display Resolution) with devicePixelRatio support
-            const rect = wrapper.getBoundingClientRect();
-            const dpr = window.devicePixelRatio || 1;
-            canvas.style.width = rect.width + 'px';
-            canvas.style.height = rect.height + 'px';
-            canvas.width = Math.max(1, Math.floor(rect.width * dpr));
-            canvas.height = Math.max(1, Math.floor(rect.height * dpr));
-            const ctx = canvas.getContext('2d');
+            const { axis, sliceIdx, container, skipMeasure, canvas, ctx, rect, w, h, srcW, srcH, vpState, dpr } = lay;
+            ctx.imageSmoothingEnabled = true;
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-            // Adaptive sampling: if source image is very large, sample to a reasonable working size
-            const maxPixels = 1024 * 1024; // target ~1MP working canvas for speed
-            const sample = Math.max(1, Math.ceil(Math.sqrt((w * h) / maxPixels)));
-            const srcW = Math.ceil(w / sample);
-            const srcH = Math.ceil(h / sample);
-
-            // Resize temp canvas to sampled image size
-            if (tempCanvas.width !== srcW || tempCanvas.height !== srcH) {
-                tempCanvas.width = srcW;
-                tempCanvas.height = srcH;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            const scaleX = rect.width / w;
+            const scaleY = rect.height / h;
+            const baseScale = Math.min(scaleX, scaleY);
+            const offsetX = (rect.width - w * baseScale) / 2;
+            const offsetY = (rect.height - h * baseScale) / 2;
+            ctx.save();
+            ctx.translate(offsetX + vpState.pan.x * baseScale, offsetY + vpState.pan.y * baseScale);
+            ctx.scale(baseScale * vpState.zoom, baseScale * vpState.zoom);
+            ctx.drawImage(tempCanvas, 0, 0, srcW, srcH, 0, 0, w, h);
+            if (state.settings.showCrosshair) {
+                let cx = 0, cy = 0;
+                if (axis === 'axial') { cx = state.crosshair.x; cy = state.crosshair.y; }
+                else if (axis === 'sagittal') { cx = state.crosshair.y; cy = state.crosshair.z; }
+                else if (axis === 'coronal') { cx = state.crosshair.x; cy = state.crosshair.z; }
+                ctx.strokeStyle = '#FFFF00';
+                ctx.lineWidth = 1 / (baseScale * vpState.zoom);
+                ctx.globalAlpha = 0.5;
+                ctx.beginPath();
+                ctx.moveTo(cx, 0); ctx.lineTo(cx, h);
+                ctx.moveTo(0, cy); ctx.lineTo(w, cy);
+                ctx.stroke();
             }
+            ctx.restore();
+            const label = container.querySelector('.vp-label');
+            if (label) label.textContent = `${axis.toUpperCase()} [${sliceIdx}]`;
+            if (!skipMeasure && state.ui.measurements.some(m => m.axis === axis)) {
+                if (typeof renderMeasurements === 'function') renderMeasurements([axis]);
+            }
+        }
 
-            // 1. GENERATE PIXELS (Sampled Source Resolution)
-            const imgData = tempCtx.createImageData(srcW, srcH);
-            const pixels = imgData.data;
-            const vol1 = state.volume;
-            if (!vol1) return;
-            const data1 = vol1.data;
-            const vol2 = state.secondaryVolume;
-            const data2 = vol2 ? vol2.data : null;
+        let sliceWorker = null;
+        let sliceWorkerInitAttempted = false;
+
+        function getSliceWorker() {
+            if (sliceWorkerInitAttempted) return sliceWorker;
+            sliceWorkerInitAttempted = true;
+            try {
+                const wk = new Worker('slice-worker.js');
+                wk.addEventListener('error', () => { sliceWorker = null; });
+                wk._wired = true;
+                wk.onmessage = (ev) => {
+                    const d = ev.data;
+                    if (!d || d.error) {
+                        if (d && d.error) console.warn('slice-worker:', d.error);
+                        return;
+                    }
+                    const { seq, axis, buffer, srcW, srcH } = d;
+                    if (!state.volume || !els.viewports[axis]) return;
+                    if (seq !== state.ui.drawSeq[axis]) return;
+                    const lay = pendingSliceLayout[axis];
+                    if (!lay || lay.seq !== seq) return;
+                    delete pendingSliceLayout[axis];
+                    finalize2DSliceDisplay(lay, buffer);
+                };
+                sliceWorker = wk;
+            } catch (err) {
+                console.warn('Slice worker unavailable:', err);
+                sliceWorker = null;
+            }
+            return sliceWorker;
+        }
+
+        function extractSliceSamples(axis, d, w, h, sample, srcW, srcH, sliceIdx, data1, data2, maskData, includeMask) {
             const strideXY = d.x * d.y;
-
-            const sliceIdx = axis === 'axial' ? state.crosshair.z :
-                axis === 'sagittal' ? state.crosshair.x :
-                    state.crosshair.y;
-
-            const showMask = state.mask && state.settings.showMask;
-            const maskOp = state.settings.maskOpacity;
-            const dualEnabled = state.settings.dualViewEnabled && data2;
-            const dualAlpha = dualEnabled ? (state.settings.dualViewOpacity || 0.5) : 0;
-
+            const n = srcW * srcH;
+            const v1 = new Float32Array(n);
+            const v2 = data2 ? new Float32Array(n) : null;
+            const mask = (includeMask && maskData) ? new Float32Array(n) : null;
+            let i = 0;
             for (let row = 0; row < srcH; row++) {
                 for (let col = 0; col < srcW; col++) {
                     const srcX = Math.min(w - 1, col * sample);
                     const srcY = Math.min(h - 1, row * sample);
                     let x, y, z;
-
                     if (axis === 'axial') {
                         x = srcX;
-                        y = (d.y - 1) - srcY; // Flip Y: Anterior (top) vs Posterior (bottom)
+                        y = (d.y - 1) - srcY;
                         z = sliceIdx;
-                    }
-                    else if (axis === 'sagittal') {
+                    } else if (axis === 'sagittal') {
                         x = sliceIdx;
                         y = srcX;
-                        z = (d.z - 1) - srcY; // Flip Z: Superior (head) at top
-                    }
-                    else if (axis === 'coronal') {
+                        z = (d.z - 1) - srcY;
+                    } else {
                         x = srcX;
                         y = sliceIdx;
-                        z = (d.z - 1) - srcY; // Flip Z: Superior (head) at top
+                        z = (d.z - 1) - srcY;
                     }
+                    const idx = x + y * d.x + z * strideXY;
+                    v1[i] = data1[idx];
+                    if (v2) v2[i] = data2[idx];
+                    if (mask) mask[i] = maskData[idx];
+                    i++;
+                }
+            }
+            return { v1, v2, mask };
+        }
 
+        function syncFillSlicePixels(axis, w, h, sample, srcW, srcH, sliceIdx, d, data1, data2, strideXY, pixels, showMask) {
+            const maskOp = state.settings.maskOpacity;
+            for (let row = 0; row < srcH; row++) {
+                for (let col = 0; col < srcW; col++) {
+                    const srcX = Math.min(w - 1, col * sample);
+                    const srcY = Math.min(h - 1, row * sample);
+                    let x, y, z;
+                    if (axis === 'axial') {
+                        x = srcX;
+                        y = (d.y - 1) - srcY;
+                        z = sliceIdx;
+                    } else if (axis === 'sagittal') {
+                        x = sliceIdx;
+                        y = srcX;
+                        z = (d.z - 1) - srcY;
+                    } else {
+                        x = srcX;
+                        y = sliceIdx;
+                        z = (d.z - 1) - srcY;
+                    }
                     if (x < 0 || x >= d.x || y < 0 || y >= d.y || z < 0 || z >= d.z) continue;
-
                     const idx = x + y * d.x + z * strideXY;
                     const mode = state.settings.dualMode || 'blend';
                     const dualEnabled = state.settings.dualViewEnabled && data2;
-
                     let r, g, b, a;
-
-                    // OPTIMIZED SOURCE SELECTION
                     if (dualEnabled && mode === 'split') {
-                        // If we are on the right half of the sampled width, use Volume 2
                         if (col >= Math.floor(srcW * 0.5)) {
                             const val2 = data2[idx];
                             [r, g, b, a] = applyWindowLevel(val2, state.settings.windowWidth, state.settings.windowCenter, state.settings.colorMap, state.settings.invert);
@@ -2434,10 +2744,8 @@
                             [r, g, b, a] = applyWindowLevel(val1, state.settings.windowWidth, state.settings.windowCenter, state.settings.colorMap, state.settings.invert);
                         }
                     } else {
-                        // Standard path for Blend, Difference, or Single View
                         const val1 = data1[idx];
                         [r, g, b, a] = applyWindowLevel(val1, state.settings.windowWidth, state.settings.windowCenter, state.settings.colorMap, state.settings.invert);
-
                         if (dualEnabled) {
                             const val2 = data2[idx];
                             if (mode === 'blend') {
@@ -2458,8 +2766,6 @@
                             }
                         }
                     }
-
-                    // Mask Overlay (Remains same)
                     if (showMask) {
                         const mVal = state.mask.data[idx];
                         const mColor = getLabelRgb(mVal);
@@ -2469,7 +2775,6 @@
                             b = b * (1 - maskOp) + mColor[2] * maskOp;
                         }
                     }
-
                     const pxIndex = (row * srcW + col) * 4;
                     pixels[pxIndex] = r;
                     pixels[pxIndex + 1] = g;
@@ -2477,54 +2782,161 @@
                     pixels[pxIndex + 3] = 255;
                 }
             }
+        }
+
+        function drawViewport(axis, options = {}) {
+            if (!state.volume) return;
+            const skipMeasure = options.skipMeasure === true;
+            /** When true, fill pixels on the main thread so batched renderAll + measurements stay in sync. */
+            const syncPixels = options.syncPixels === true;
+
+            const container = els.viewports[axis];
+            const canvas = container.querySelector('canvas');
+            const wrapper = canvas.parentElement;
+            const vpState = state.ui.viewports[axis];
+
+            let w, h;
+            const d = state.volume.dims;
+            if (axis === 'axial') { w = d.x; h = d.y; }
+            else if (axis === 'sagittal') { w = d.y; h = d.z; }
+            else if (axis === 'coronal') { w = d.x; h = d.z; }
+
+            const dpr = window.devicePixelRatio || 1;
+            const lo = state.ui.viewportLayout[axis];
+            let rectWidth;
+            let rectHeight;
+            if (lo && lo.w > 0 && lo.h > 0 && lo.dpr === dpr) {
+                rectWidth = lo.w;
+                rectHeight = lo.h;
+            } else {
+                const r = wrapper.getBoundingClientRect();
+                rectWidth = r.width;
+                rectHeight = r.height;
+                state.ui.viewportLayout[axis] = { w: rectWidth, h: rectHeight, dpr };
+            }
+            const rect = { width: rectWidth, height: rectHeight };
+            const bufW = Math.max(1, Math.floor(rectWidth * dpr));
+            const bufH = Math.max(1, Math.floor(rectHeight * dpr));
+            if (canvas.width !== bufW || canvas.height !== bufH) {
+                canvas.width = bufW;
+                canvas.height = bufH;
+            }
+            const sw = rectWidth + 'px';
+            const sh = rectHeight + 'px';
+            if (canvas.style.width !== sw) canvas.style.width = sw;
+            if (canvas.style.height !== sh) canvas.style.height = sh;
+            const ctx = canvas.getContext('2d');
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+            const maxPixels = 1024 * 1024;
+            const sample = Math.max(1, Math.ceil(Math.sqrt((w * h) / maxPixels)));
+            const srcW = Math.ceil(w / sample);
+            const srcH = Math.ceil(h / sample);
+
+            if (tempCanvas.width !== srcW || tempCanvas.height !== srcH) {
+                tempCanvas.width = srcW;
+                tempCanvas.height = srcH;
+            }
+
+            const vol1 = state.volume;
+            const data1 = vol1.data;
+            const vol2 = state.secondaryVolume;
+            const data2 = vol2 ? vol2.data : null;
+            const strideXY = d.x * d.y;
+
+            const sliceIdx = axis === 'axial' ? state.crosshair.z :
+                axis === 'sagittal' ? state.crosshair.x :
+                    state.crosshair.y;
+
+            const showMask = !!(state.mask && state.settings.showMask);
+            const maskData = state.mask ? state.mask.data : null;
+            const dualAlpha = (state.settings.dualViewEnabled && data2) ? (state.settings.dualViewOpacity || 0.5) : 0;
+
+            const layout = {
+                seq: 0,
+                axis,
+                sliceIdx,
+                container,
+                skipMeasure,
+                canvas,
+                ctx,
+                rect,
+                w, h, srcW, srcH,
+                vpState,
+                dpr
+            };
+
+            const wk = getSliceWorker();
+            if (wk && !syncPixels) {
+                state.ui.drawSeq[axis] = (state.ui.drawSeq[axis] || 0) + 1;
+                const seq = state.ui.drawSeq[axis];
+                layout.seq = seq;
+                const extracted = extractSliceSamples(axis, d, w, h, sample, srcW, srcH, sliceIdx, data1, data2, maskData, showMask);
+                const transfer = [extracted.v1.buffer];
+                if (extracted.v2) transfer.push(extracted.v2.buffer);
+                if (extracted.mask) transfer.push(extracted.mask.buffer);
+
+                pendingSliceLayout[axis] = layout;
+                wk.postMessage({
+                    seq,
+                    axis,
+                    settings: {
+                        srcW,
+                        srcH,
+                        ww: state.settings.windowWidth,
+                        wc: state.settings.windowCenter,
+                        colorMap: state.settings.colorMap,
+                        invert: !!state.settings.invert,
+                        dualEnabled: !!(state.settings.dualViewEnabled && data2),
+                        dualMode: state.settings.dualMode || 'blend',
+                        dualAlpha,
+                        showMask,
+                        maskOpacity: state.settings.maskOpacity,
+                        hasMask: !!(showMask && extracted.mask)
+                    },
+                    customLabelColors: serializeLabelMapForWorker(),
+                    buffers: {
+                        vol1: extracted.v1.buffer,
+                        vol2: extracted.v2 ? extracted.v2.buffer : null,
+                        mask: extracted.mask ? extracted.mask.buffer : null
+                    }
+                }, transfer);
+                return;
+            }
+
+            const imgData = tempCtx.createImageData(srcW, srcH);
+            syncFillSlicePixels(axis, w, h, sample, srcW, srcH, sliceIdx, d, data1, data2, strideXY, imgData.data, showMask);
             tempCtx.putImageData(imgData, 0, 0);
 
-            // 2. DRAW TO DISPLAY (Fit Contain + Pan/Zoom)
-            ctx.imageSmoothingEnabled = true; // smoother scaled image
+            ctx.imageSmoothingEnabled = true;
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-            // Calculate "Contain" Ratio using CSS pixels (we transformed context to dpr)
             const scaleX = rect.width / w;
             const scaleY = rect.height / h;
-            const baseScale = Math.min(scaleX, scaleY); // Fit whole image
-
-            // Center offsets (in CSS pixels)
+            const baseScale = Math.min(scaleX, scaleY);
             const offsetX = (rect.width - w * baseScale) / 2;
             const offsetY = (rect.height - h * baseScale) / 2;
-
             ctx.save();
-
-            // Apply transforms: Translate Center -> Apply Pan -> Apply Zoom -> Apply Base Scale
-            // Note: Pan is stored in CSS pixels, so scale it by baseScale to apply before zoom scaling
             ctx.translate(offsetX + vpState.pan.x * baseScale, offsetY + vpState.pan.y * baseScale);
             ctx.scale(baseScale * vpState.zoom, baseScale * vpState.zoom);
-
-            // Draw sampled tempCanvas scaled back to full image size in image-space coordinates
             ctx.drawImage(tempCanvas, 0, 0, srcW, srcH, 0, 0, w, h);
-
-            // 3. DRAW CROSSHAIRS (Transformed space)
             if (state.settings.showCrosshair) {
                 let cx = 0, cy = 0;
                 if (axis === 'axial') { cx = state.crosshair.x; cy = state.crosshair.y; }
                 else if (axis === 'sagittal') { cx = state.crosshair.y; cy = state.crosshair.z; }
                 else if (axis === 'coronal') { cx = state.crosshair.x; cy = state.crosshair.z; }
-
                 ctx.strokeStyle = '#FFFF00';
-                ctx.lineWidth = 1 / (baseScale * vpState.zoom); // Keep line thin
+                ctx.lineWidth = 1 / (baseScale * vpState.zoom);
                 ctx.globalAlpha = 0.5;
                 ctx.beginPath();
-                // Crosshair spans the whole image, not just canvas
                 ctx.moveTo(cx, 0); ctx.lineTo(cx, h);
                 ctx.moveTo(0, cy); ctx.lineTo(w, cy);
                 ctx.stroke();
             }
-
             ctx.restore();
-
-            //container.querySelector('.overlay-text').textContent = `${axis.toUpperCase()} [${sliceIdx}]`;
             const label = container.querySelector('.vp-label');
-            if (label) {
-                label.textContent = `${axis.toUpperCase()} [${sliceIdx}]`;
+            if (label) label.textContent = `${axis.toUpperCase()} [${sliceIdx}]`;
+            if (!skipMeasure && state.ui.measurements.some(m => m.axis === axis)) {
+                if (typeof renderMeasurements === 'function') renderMeasurements([axis]);
             }
         }
 
@@ -2821,6 +3233,49 @@
 
             document.getElementById('3d-rendering')?.classList.add('hidden');
             renderOptimizedFallback3D();
+        }
+
+        function requestMask3DRefresh(immediate) {
+            if (!state.mask || !state.settings.showMask) return;
+            const run = () => {
+                updateVTKVolume();
+                try { render3D(); } catch (e) { }
+            };
+            if (immediate) {
+                cancelMask3DThrottle();
+                run();
+                return;
+            }
+            if (mask3DThrottleTimer) return;
+            mask3DThrottleTimer = setTimeout(() => {
+                mask3DThrottleTimer = null;
+                run();
+            }, MASK_3D_THROTTLE_MS);
+        }
+
+        let vtkQualityThrottleTimer = null;
+        const VTK_QUALITY_THROTTLE_MS = 180;
+        function requestVTKQualityRefresh(immediate) {
+            const run = () => {
+                try { updateVTKVolume(); } catch (err) { }
+                _3dCache.lastQuality = null;
+                _3dCache.glPoints = null;
+                _3dRequestRender();
+                try { renderOptimizedFallback3D(); } catch (err) { }
+            };
+            if (immediate) {
+                if (vtkQualityThrottleTimer) {
+                    clearTimeout(vtkQualityThrottleTimer);
+                    vtkQualityThrottleTimer = null;
+                }
+                run();
+                return;
+            }
+            if (vtkQualityThrottleTimer) return;
+            vtkQualityThrottleTimer = setTimeout(() => {
+                vtkQualityThrottleTimer = null;
+                run();
+            }, VTK_QUALITY_THROTTLE_MS);
         }
 
         function renderOptimizedFallback3D() {
@@ -3130,13 +3585,30 @@
             _3dCache.glPoints = null;
         }
 
-        function renderAll(immediate3D = false) {
+        function normalizeDirty2D(dirty2D) {
+            const all = ['axial', 'sagittal', 'coronal'];
+            if (dirty2D == null || dirty2D === 'all') return all;
+            const list = Array.isArray(dirty2D) ? dirty2D : [dirty2D];
+            const set = new Set(list.filter(a => all.includes(a)));
+            for (const m of state.ui.measurements || []) {
+                if (m && m.axis) set.add(m.axis);
+            }
+            const out = all.filter(a => set.has(a));
+            return out.length ? out : all;
+        }
+
+        function renderAll(immediate3D = false, dirty2D = null) {
+            const dirtyAxes = normalizeDirty2D(dirty2D);
             const doRender = () => {
                 renderAll._scheduled = false;
                 renderAll._lastFrame = performance.now();
-                drawViewport('axial');
-                drawViewport('sagittal');
-                drawViewport('coronal');
+                for (const ax of dirtyAxes) {
+                    drawViewport(ax, { skipMeasure: true, syncPixels: true });
+                }
+                if (state.ui.measurements && state.ui.measurements.length) {
+                    if (typeof renderMeasurements === 'function')
+                        renderMeasurements(dirtyAxes.length >= 3 ? null : dirtyAxes);
+                }
                 if (state.mask) {
                     if (immediate3D) {
                         render3D();
@@ -3227,6 +3699,7 @@
                 const dims = { x: 180, y: 220, z: 180 };
                 const result = generateSyntheticVolume(dims);
                 state.volume = result;
+                historyManager.clear();
                 state.mask = null; // clear mask
                 state.crosshair = { x: 90, y: 110, z: 90 };
                 resetViews();
@@ -3349,6 +3822,7 @@
                         try { render3D(); } catch (e) { }
                     }
                     if (resMask) {
+                        historyManager.pushMaskReplace(resMask);
                         state.mask = resMask;
                         // Enable mask UI
                         els.inputs.maskCheck.checked = true;
@@ -3357,8 +3831,7 @@
 
                         populateLabelColorUI();
                         renderAll();
-                        updateVTKVolume();
-                        try { render3D(); } catch (e) { }
+                        requestMask3DRefresh(true);
                     }
 
                 } catch (err) {
@@ -3456,11 +3929,10 @@
                 const q = Number(e.target.value);
                 state.settings.renderQuality = q;
                 if (renderQualityVal) renderQualityVal.textContent = String(q);
-                try { updateVTKVolume(); } catch (err) { }
-                _3dCache.lastQuality = null;
-                _3dCache.glPoints = null;
-                _3dRequestRender();
-                try { renderOptimizedFallback3D(); } catch (err) { }
+                requestVTKQualityRefresh(false);
+            });
+            renderQualityEl.addEventListener('change', () => {
+                requestVTKQualityRefresh(true);
             });
         }
 
@@ -3610,6 +4082,7 @@
 
                                         if (vx >= 0 && vx < d.x && vy >= 0 && vy < d.y && vz >= 0 && vz < d.z) {
                                             const idx = vx + vy * d.x + vz * strideXY;
+                                            historyManager.noteMaskWrite(idx, state.mask.data[idx]);
                                             state.mask.data[idx] = val;
                                         }
                                     }
@@ -3617,6 +4090,7 @@
                             }
                         }
                         drawViewport(axis);
+                        if (state.mask && state.settings.showMask) requestMask3DRefresh(false);
                     }
                 };
 
@@ -3624,7 +4098,7 @@
                 const isPan = e.button === 2 || (e.button === 0 && e.shiftKey);
 
                 if (tool !== 'nav' && !isPan) {
-                    // Start Painting
+                    // Start Painting (stroke baseline started in capture phase)
                     state.ui.isPainting = true;
                     paintAt(e.clientX, e.clientY);
                 }
@@ -3689,10 +4163,10 @@
                 const onUp = () => {
                     if (state.ui.isPainting) {
                         state.ui.isPainting = false;
+                        historyManager.commitBrushStroke();
                         // Trigger mask refresh for labels and 3D
                         populateLabelColorUI();
-                        updateVTKVolume();
-                        try { render3D(); } catch (e) { }
+                        requestMask3DRefresh(true);
                     }
                     window.removeEventListener('mousemove', onMove);
                     window.removeEventListener('mouseup', onUp);
@@ -4166,8 +4640,7 @@
                 container.addEventListener('mousedown', (e) => {
                     const tool = state.ui.tool;
                     if ((tool === 'brush' || tool === 'erase') && e.button === 0 && !e.shiftKey) {
-                        // Push history before starting to paint
-                        historyManager.push();
+                        historyManager.beginBrushStroke();
                     }
                 }, true); // Capture phase to run before the existing handler
             });
@@ -4179,11 +4652,19 @@
         const originalRenderAll = typeof renderAll === 'function' ? renderAll : null;
 
         // Extend renderAll to draw measurements
-        const renderMeasurements = () => {
-            // Remove old measurement labels
-            document.querySelectorAll('.measurement-label').forEach(el => el.remove());
+        const renderMeasurements = (axesFilter = null) => {
+            const allAxes = ['axial', 'sagittal', 'coronal'];
+            if (axesFilter && axesFilter.length) {
+                const set = new Set(axesFilter.filter(a => allAxes.includes(a)));
+                document.querySelectorAll('.measurement-label').forEach(el => {
+                    if (set.has(el.dataset.vpAxis)) el.remove();
+                });
+            } else {
+                document.querySelectorAll('.measurement-label').forEach(el => el.remove());
+            }
 
             state.ui.measurements.forEach((m, idx) => {
+                if (axesFilter && axesFilter.length && !axesFilter.includes(m.axis)) return;
                 const container = els.viewports[m.axis];
                 if (!container) return;
 
@@ -4237,6 +4718,7 @@
                 // Add label
                 const label = document.createElement('div');
                 label.className = 'measurement-label';
+                label.dataset.vpAxis = m.axis;
                 label.textContent = `${m.distance.toFixed(2)} mm`;
                 label.style.left = `${(x1 + x2) / 2 + container.offsetLeft}px`;
                 label.style.top = `${(y1 + y2) / 2 + container.offsetTop}px`;
@@ -4251,9 +4733,6 @@
 
             window.renderAll = function (...args) {
                 origRenderAllFn.apply(this, args);
-                if (state.ui.measurements.length > 0) {
-                    setTimeout(renderMeasurements, 10);
-                }
             };
             window.renderAll._hooked = true;
         };
@@ -4755,12 +5234,12 @@
         }
 
         // Log brush strokes
-        const origBrushHandler = historyManager.push.bind(historyManager);
-        historyManager.push = function () {
-            origBrushHandler();
-            if (state.ui.tool === 'brush') {
+        const origCommitBrush = historyManager.commitBrushStroke.bind(historyManager);
+        historyManager.commitBrushStroke = function () {
+            const committed = origCommitBrush();
+            if (committed && state.ui.tool === 'brush') {
                 addLogEntry('Brush Stroke', { size: state.ui.brushSize });
-            } else if (state.ui.tool === 'erase') {
+            } else if (committed && state.ui.tool === 'erase') {
                 addLogEntry('Eraser Stroke', { size: state.ui.brushSize });
             }
         };
@@ -4772,7 +5251,139 @@
             addLogEntry('Load MRI', { filename: file.name || 'unknown' });
         };
 
-        console.log('NeuroView Web Pro - Phase 3 loaded: W/L Presets, Processing Log');
+        // ==========================================
+        // PHASE 4: 3D Clip Box
+        // ==========================================
+
+        // Add clip box state
+        state.ui.clipBox = {
+            enabled: false,
+            x: { min: 0, max: 100 },
+            y: { min: 0, max: 100 },
+            z: { min: 0, max: 100 }
+        };
+
+        // Enable/disable clip box
+        document.getElementById('check-clip-enabled')?.addEventListener('change', (e) => {
+            state.ui.clipBox.enabled = e.target.checked;
+            document.getElementById('clip-box-controls')?.classList.toggle('hidden', !e.target.checked);
+
+            // Force 3D regeneration
+            if (_3dCache) {
+                _3dCache.needsRegen = true;
+                _3dCache.lastMaskId = null;
+            }
+            requestMask3DRefresh(true);
+
+            if (e.target.checked) {
+                addLogEntry('Clip Box', { action: 'enabled' });
+            }
+        });
+
+        // Clip slider handlers
+        function updateClipValue(axis) {
+            const minVal = Number(document.getElementById(`clip-${axis}-min`)?.value || 0);
+            const maxVal = Number(document.getElementById(`clip-${axis}-max`)?.value || 100);
+
+            // Ensure min <= max
+            state.ui.clipBox[axis].min = Math.min(minVal, maxVal);
+            state.ui.clipBox[axis].max = Math.max(minVal, maxVal);
+
+            // Update display
+            const display = document.getElementById(`clip-${axis}-val`);
+            if (display) {
+                display.textContent = `${state.ui.clipBox[axis].min}-${state.ui.clipBox[axis].max}%`;
+            }
+
+            // Force 3D regeneration with clip (throttled while dragging sliders)
+            if (state.ui.clipBox.enabled && _3dCache) {
+                _3dCache.needsRegen = true;
+                _3dCache.lastMaskId = null;
+            }
+            requestMask3DRefresh(false);
+        }
+
+        ['x', 'y', 'z'].forEach(axis => {
+            const flushClip3D = () => requestMask3DRefresh(true);
+            document.getElementById(`clip-${axis}-min`)?.addEventListener('input', () => updateClipValue(axis));
+            document.getElementById(`clip-${axis}-max`)?.addEventListener('input', () => updateClipValue(axis));
+            document.getElementById(`clip-${axis}-min`)?.addEventListener('change', flushClip3D);
+            document.getElementById(`clip-${axis}-max`)?.addEventListener('change', flushClip3D);
+        });
+
+        // Reset clip box
+        document.getElementById('btn-clip-reset')?.addEventListener('click', () => {
+            ['x', 'y', 'z'].forEach(axis => {
+                document.getElementById(`clip-${axis}-min`).value = 0;
+                document.getElementById(`clip-${axis}-max`).value = 100;
+                state.ui.clipBox[axis] = { min: 0, max: 100 };
+                document.getElementById(`clip-${axis}-val`).textContent = '0-100%';
+            });
+
+            if (_3dCache) {
+                _3dCache.needsRegen = true;
+                _3dCache.lastMaskId = null;
+            }
+            requestMask3DRefresh(true);
+            addLogEntry('Clip Box', { action: 'reset' });
+        });
+
+        // Sync to crosshair
+        document.getElementById('btn-clip-sync')?.addEventListener('click', () => {
+            if (!state.volume) return;
+
+            const d = state.volume.dims;
+            const margin = 20; // percent margin around crosshair
+
+            // Calculate percent positions
+            const xPct = (state.crosshair.x / d.x) * 100;
+            const yPct = (state.crosshair.y / d.y) * 100;
+            const zPct = (state.crosshair.z / d.z) * 100;
+
+            // Set clip box around crosshair
+            ['x', 'y', 'z'].forEach((axis, i) => {
+                const pct = [xPct, yPct, zPct][i];
+                const minV = Math.max(0, pct - margin);
+                const maxV = Math.min(100, pct + margin);
+
+                document.getElementById(`clip-${axis}-min`).value = Math.round(minV);
+                document.getElementById(`clip-${axis}-max`).value = Math.round(maxV);
+                state.ui.clipBox[axis] = { min: Math.round(minV), max: Math.round(maxV) };
+                document.getElementById(`clip-${axis}-val`).textContent = `${Math.round(minV)}-${Math.round(maxV)}%`;
+            });
+
+            if (_3dCache) {
+                _3dCache.needsRegen = true;
+                _3dCache.lastMaskId = null;
+            }
+            requestMask3DRefresh(true);
+            addLogEntry('Clip Box', { action: 'sync-crosshair' });
+        });
+
+        // Override 3D point regeneration to apply clipping
+        const orig3dRegeneratePoints = _3dRegeneratePoints;
+        _3dRegeneratePoints = function () {
+            orig3dRegeneratePoints();
+
+            // Apply clipping if enabled
+            if (state.ui.clipBox.enabled && _3dCache.points && state.volume) {
+                const d = state.volume.dims;
+                const clip = state.ui.clipBox;
+
+                _3dCache.points = _3dCache.points.filter(p => {
+                    // Convert normalized coords back to voxel percent
+                    const xPct = (p.x + 0.5) * 100;
+                    const yPct = (p.y + 0.5) * 100;
+                    const zPct = (p.z + 0.5) * 100;
+
+                    return xPct >= clip.x.min && xPct <= clip.x.max &&
+                        yPct >= clip.y.min && yPct <= clip.y.max &&
+                        zPct >= clip.z.min && zPct <= clip.z.max;
+                });
+            }
+        };
+
+        console.log('NeuroView Web Pro - Phase 4 loaded: 3D Clip Box');
     </script>
 </body>
 
